@@ -187,7 +187,8 @@ Depth is not an input. The loader composes simultaneous frames using native
 compose_multiview: head on top at 320x240, left wrist bottom left at 160x120,
 right wrist bottom right at 160x120 (320x360 canvas). No camera is dropped or
 cropped. Native resolution-256 transforms then resize the complete canvas
-with preserved aspect ratio and reflection padding. Camera layout text is
+with preserved aspect ratio and reflection padding to 256x256 (content
+256 high x 228 wide, right padding 28). Camera layout text is
 included in the structured prompt. Deployment must use the SAME composition
 and layout metadata; the original head-only inference CLI assumes one head
 image and is not a direct three-camera inference entry point.
