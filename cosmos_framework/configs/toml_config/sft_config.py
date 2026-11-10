@@ -905,4 +905,16 @@ def load_experiment_from_toml(
     # schema so the framework-owned hydra configs stay untouched; lands as a
     # plain dict reachable via config.custom.
     config.custom = raw.get("custom", {})
+    # Validate the resolved config, including CLI overrides, before allocating
+    # GPUs or entering --dryrun. A lambda schedule otherwise fails only after
+    # its last configured cycle with an opaque NoneType indexing error.
+    from cosmos_framework.utils.functional.lr_scheduler import validate_lr_schedule_horizon
+
+    trainer = getattr(config, "trainer", None)
+    max_iter = getattr(trainer, "max_iter", None)
+    if max_iter is not None:
+        epochs = getattr(trainer, "num_epochs", None)
+        steps_per_epoch = getattr(trainer, "steps_per_epoch", None)
+        horizon = int(epochs) * int(steps_per_epoch) if epochs and steps_per_epoch else int(max_iter)
+        validate_lr_schedule_horizon(getattr(config, "scheduler", None), horizon)
     return config

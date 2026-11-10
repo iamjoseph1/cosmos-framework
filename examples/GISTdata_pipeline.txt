@@ -64,7 +64,7 @@ All 28 generation layers, the final generation norm, generation-specific und-K
 cross-attention norms, time_embedder, vae2llm, llm2vae, action2llm, llm2action and
 action_modality_embed train. Understanding weights and the VAE stay frozen.
 1,423,911,744 parameters train. Fresh action projections use the action recipe's
-5x LR multiplier. The 2e-5 base LR, batch 8, 200-step schedule, 256 resolution and
+5x LR multiplier. The 2e-5 base LR, batch 8, 600-step schedule, 256 resolution and
 20-Hz 18-D embodiment are GISTdata adaptation defaults, not official tuning for
 this dataset or a reproduction of the large-scale DROID run.
 
@@ -83,9 +83,15 @@ before starting torchrun. It refuses a Nano or unmatched base checkpoint.
 The data bundle, original actions, state prefix, 32-action/33-frame horizon and
 joint order are reused. W&B stays online in inrol/rb_xhand_dish_pnp.
 
-Edge hyperparameters: optimizer.lr=2e-5 (action projections=1e-4), max_iter=200,
-grad_accum_iter=8, warm_up_steps=[20], cycle_lengths=[200], save_iter=50.
+Edge hyperparameters: optimizer.lr=2e-5 (action projections=1e-4), max_iter=600,
+grad_accum_iter=8, warm_up_steps=[20], cycle_lengths=[600], save_iter=50.
 Effective batch = 1 window/rank x 1 rank x 8 accumulations = 8 windows.
+Keep cycle_lengths aligned with max_iter. The loader/dryrun now rejects finite
+lambda schedules that end before the run's requested optimizer-step horizon.
+To resume, keep OUTPUT_ROOT and job.name unchanged; the latest model, optimizer,
+scheduler progress and trainer state are loaded automatically. The configured
+schedule is evaluated at the restored step, so extending its length takes effect
+without resetting optimizer progress. Earlier learning-rate history is retained.
 Optional two-GPU FSDP: explicitly select two healthy GPU UUIDs, set
 NPROC_PER_NODE=2, and pass trainer.grad_accum_iter=4 to keep effective batch 8.
 For local inference, export the trained Edge model with its processor and vision

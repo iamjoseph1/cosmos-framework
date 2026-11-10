@@ -8,6 +8,20 @@ import numpy as np
 from cosmos_framework.utils import distributed, log
 
 
+def validate_lr_schedule_horizon(scheduler_config, max_iterations: int) -> None:
+    """Reject finite lambda schedules that end before the requested training run."""
+    kind = str(getattr(scheduler_config, "lr_scheduler_type", "")).lower()
+    if kind not in ("lambdalinear", "lambdacosine"):
+        return
+    cycles = getattr(scheduler_config, "cycle_lengths", None)
+    if cycles and sum(cycles) < max_iterations:
+        raise ValueError(
+            f"scheduler.cycle_lengths={list(cycles)} covers {sum(cycles)} optimizer steps, "
+            f"but training requires {max_iterations}. Set scheduler.cycle_lengths to cover "
+            "trainer.max_iter (or trainer.num_epochs * trainer.steps_per_epoch)."
+        )
+
+
 class TeroPolyScheduler:
     def __init__(
         self,

@@ -41,4 +41,6 @@ c.optimizer.lr_multipliers = {"action2llm": 5.0, "llm2action": 5.0, "action_moda
 c.scheduler.f_max = [1.0]
 c.scheduler.f_min = [0.0]
 c.scheduler.f_start = [0.0]
+c.scheduler.cycle_lengths = [600]
+c.trainer.max_iter = 600
 ConfigStore.instance().store(group="experiment", package="_global_", name="action_policy_GISTdata_edge", node=c)

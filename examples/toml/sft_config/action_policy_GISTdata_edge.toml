@@ -32,14 +32,14 @@ lr = 2.0e-5
 lr_multipliers = { action2llm = 5.0, llm2action = 5.0, action_modality_embed = 5.0 }
 
 [scheduler]
-cycle_lengths = [200]
+cycle_lengths = [600]
 warm_up_steps = [20]
 f_max = [1.0]
 f_min = [0.0]
 f_start = [0.0]
 
 [trainer]
-max_iter = 200
+max_iter = 600
 grad_accum_iter = 8
 logging_iter = 1
 
