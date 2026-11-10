@@ -58,15 +58,22 @@ def prepared(tmp_path):
                     }
                 )
             )
-            with av.open(str(ep / "videos/head.mp4"), "w") as c:
-                s = c.add_stream("libx264", rate=20)
-                s.width, s.height, s.pix_fmt = 64, 48, "yuv420p"
-                for t in range(13):
-                    f = av.VideoFrame.from_ndarray(np.full((48, 64, 3), t * 10, dtype=np.uint8), format="rgb24")
-                    for packet in s.encode(f):
+            for camera, offset in (("head", 0), ("left_wrist", 35), ("right_wrist", 70)):
+                with av.open(str(ep / f"videos/{camera}.mp4"), "w") as c:
+                    stream = c.add_stream("libx264", rate=20)
+                    stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+                    for t in range(13):
+                        frame = av.VideoFrame.from_ndarray(
+                            np.full((48, 64, 3), t * 10 + offset, dtype=np.uint8), format="rgb24"
+                        )
+                        for packet in stream.encode(frame):
+                            c.mux(packet)
+                    for packet in stream.encode():
                         c.mux(packet)
-                for packet in s.encode():
-                    c.mux(packet)
+            metadata_path = ep / "metadata.json"
+            metadata = json.loads(metadata_path.read_text())
+            metadata["cameras"].update({name: {"resolution": [64, 48]} for name in ("left_wrist", "right_wrist")})
+            metadata_path.write_text(json.dumps(metadata))
     output = tmp_path / "bundle"
     summary = prepare(root, output, expected_episodes=4, horizon=8, stride=3)
     return root, output, summary
@@ -136,3 +143,69 @@ def test_original_command_integrity_is_checked(prepared):
     np.savez_compressed(path, **values)
     with pytest.raises(ValueError, match="original GISTdata"):
         validate(bundle)
+
+
+@pytest.fixture
+def threecam(prepared):
+    root, head_bundle, _ = prepared
+    bundle = head_bundle.parent / "threecam"
+    prepare(root, bundle, expected_episodes=4, horizon=8, stride=3, camera_mode="threecam")
+    return root, head_bundle, bundle
+
+
+def test_threecam_contains_all_synchronized_views_and_same_actions(threecam):
+    _, head_bundle, bundle = threecam
+    head = GISTdataActionDataset(str(head_bundle), "all")
+    multi = GISTdataActionDataset(str(bundle), "all")
+    assert head.windows == multi.windows
+    assert [(r["episode_id"], r["split"]) for r in head.episodes.values()] == [
+        (r["episode_id"], r["split"]) for r in multi.episodes.values()
+    ]
+    for index in (0, 1, len(multi) - 1):
+        sample = multi[index]
+        assert sample["video"].shape == (3, 9, 72, 64)
+        torch.testing.assert_close(sample["action"], head[index]["action"])
+        torch.testing.assert_close(sample["video"][:, :, :48], head[index]["video"])
+        # Each wrist has a distinctive brightness and stays at the matching time.
+        for t in (0, 8):
+            primary = sample["video"][:, t, 0, 0].float().mean()
+            left = sample["video"][:, t, 50, 0].float().mean()
+            right = sample["video"][:, t, 50, 40].float().mean()
+            assert 30 < left - primary < 40
+            assert 65 < right - primary < 75
+        assert sample["viewpoint"] == "concat_view"
+        assert "left-wrist" in sample["additional_view_description"]
+    assert validate(bundle)["camera_order"] == ["head", "left_wrist", "right_wrist"]
+
+
+def test_threecam_recipe_refuses_head_only_data(prepared):
+    _, bundle, _ = prepared
+    with pytest.raises(ValueError, match="camera mode"):
+        get_GISTdata_action_sft_dataset(str(bundle), camera_mode="threecam")
+
+
+def test_threecam_wrist_integrity_is_checked(threecam):
+    _, _, bundle = threecam
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    video = bundle / manifest["episodes"][0]["camera_videos"]["right_wrist"]
+    video.write_bytes(video.read_bytes() + b"mutation")
+    with pytest.raises(ValueError, match="right_wrist"):
+        validate(bundle)
+
+
+def test_threecam_rejects_unsynchronized_camera_before_output_creation(prepared):
+    root, bundle, _ = prepared
+    video = root / "results/red_objects_defaultscene_3cam/ycb_bowl/data_0001/videos/left_wrist.mp4"
+    with av.open(str(video), "w") as c:
+        stream = c.add_stream("libx264", rate=10)
+        stream.width, stream.height, stream.pix_fmt = 64, 48, "yuv420p"
+        for t in range(13):
+            frame = av.VideoFrame.from_ndarray(np.zeros((48, 64, 3), dtype=np.uint8), format="rgb24")
+            for packet in stream.encode(frame):
+                c.mux(packet)
+        for packet in stream.encode():
+            c.mux(packet)
+    output = bundle.parent / "bad_threecam"
+    with pytest.raises(ValueError, match="clock mismatch.*left_wrist"):
+        prepare(root, output, expected_episodes=4, horizon=8, camera_mode="threecam")
+    assert not output.exists()

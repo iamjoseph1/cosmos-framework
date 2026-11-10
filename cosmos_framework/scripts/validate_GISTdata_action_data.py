@@ -28,10 +28,14 @@ def validate(bundle: Path, tokenizer_folder: Path | None = None, tokenizer_model
                 raise ValueError(f"Nonfinite trajectory: {r['episode_id']}")
             if a["action"].dtype != np.float32 or action_sha256(a["action"]) != r["original_action_sha256"]:
                 raise ValueError(f"Commands no longer match the original GISTdata: {r['episode_id']}")
-        if not (bundle / r["head_video"]).is_file():
-            raise FileNotFoundError(r["head_video"])
-        if file_sha256(bundle / r["head_video"]) != r["source_head_sha256"]:
-            raise ValueError(f"Head video was changed: {r['episode_id']}")
+        videos = r.get("camera_videos", {"head": r["head_video"]})
+        hashes = r.get("source_camera_sha256", {"head": r["source_head_sha256"]})
+        expected = m.get("camera_order", ["head"])
+        if set(videos) != set(expected) or set(hashes) != set(expected):
+            raise ValueError(f"Missing camera assets: {r['episode_id']}")
+        for camera in expected:
+            if file_sha256(bundle / videos[camera]) != hashes[camera]:
+                raise ValueError(f"Camera video was changed: {r['episode_id']}:{camera}")
     tokenizer = None
     if tokenizer_folder is not None and tokenizer_model == "edge":
         from cosmos_framework.data.generator.processors import build_processor
@@ -73,6 +77,8 @@ def validate(bundle: Path, tokenizer_folder: Path | None = None, tokenizer_model
     return {
         "passed": True,
         "episodes": len(m["episodes"]),
+        "camera_mode": m.get("camera_mode", "head"),
+        "camera_order": m.get("camera_order", ["head"]),
         "tokenized": tokenizer is not None,
         "tokenizer_model": tokenizer_model,
         "samples": examples,

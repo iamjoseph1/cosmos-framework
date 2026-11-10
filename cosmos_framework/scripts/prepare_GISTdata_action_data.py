@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: OpenMDW-1.1
-"""Package original GISTdata commands with aligned head-camera observations.
+"""Package original GISTdata commands with aligned head or three-camera observations.
 
 Run with Python + numpy + ffprobe; importing this module does not require CUDA.
 All episodes, including failed demonstrations, are retained and explicitly tagged.
@@ -27,7 +27,19 @@ from cosmos_framework.utils.GISTdata_action_contract import (
 )
 
 
-def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, stride=8, val_fraction=0.1, seed=42):
+def prepare(
+    source: Path,
+    output: Path,
+    expected_episodes=200,
+    horizon=32,
+    stride=8,
+    val_fraction=0.1,
+    seed=42,
+    camera_mode="head",
+):
+    if camera_mode not in ("head", "threecam"):
+        raise ValueError("camera_mode must be head or threecam")
+    cameras = ("head",) if camera_mode == "head" else ("head", "left_wrist", "right_wrist")
     source, output = source.resolve(), output.resolve()
     if not 0 < val_fraction < 1:
         raise ValueError("val_fraction must be between zero and one")
@@ -67,29 +79,46 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
             raise ValueError(f"Expected observation-before-action timestamps at {FPS} Hz: {ep}")
         if meta["control_hz"] != FPS or report["executed_actions"] != len(action):
             raise ValueError(f"Command count or control rate mismatch: {ep}")
-        video = ep / "videos/head.mp4"
-        probe = json.loads(
-            subprocess.check_output(
-                [
-                    "ffprobe",
-                    "-v",
-                    "error",
-                    "-select_streams",
-                    "v:0",
-                    "-show_entries",
-                    "stream=width,height,nb_frames,avg_frame_rate",
-                    "-of",
-                    "json",
-                    str(video),
-                ],
-                text=True,
+        camera_sources, camera_hashes = {}, {}
+        for camera in cameras:
+            video = ep / "videos" / f"{camera}.mp4"
+            if not meta["cameras"][camera].get("rgb", True):
+                raise ValueError(f"Expected RGB camera: {ep}:{camera}")
+            probe = json.loads(
+                subprocess.check_output(
+                    [
+                        "ffprobe",
+                        "-v",
+                        "error",
+                        "-select_streams",
+                        "v:0",
+                        "-show_frames",
+                        "-show_entries",
+                        "stream=width,height,nb_frames,avg_frame_rate:frame=best_effort_timestamp_time",
+                        "-of",
+                        "json",
+                        str(video),
+                    ],
+                    text=True,
+                )
             )
-        )["streams"][0]
-        num, den = map(float, probe["avg_frame_rate"].split("/"))
-        if int(probe["nb_frames"]) != len(state) or abs(num / den - FPS) > 1e-7:
-            raise ValueError(f"RGB/action clock mismatch: {ep}")
-        if (probe["width"], probe["height"]) != tuple(meta["cameras"]["head"]["resolution"]):
-            raise ValueError(f"Head-camera dimensions differ from metadata: {ep}")
+            stream = probe["streams"][0]
+            num, den = map(float, stream["avg_frame_rate"].split("/"))
+            pts = np.array([float(f["best_effort_timestamp_time"]) for f in probe["frames"]])
+            if (
+                int(stream["nb_frames"]) != len(state)
+                or abs(num / den - FPS) > 1e-7
+                or pts.shape != timestamp.shape
+                or not np.allclose(pts, timestamp, atol=1e-7)
+            ):
+                raise ValueError(f"RGB/action clock mismatch: {ep}:{camera}")
+            dimensions = (stream["width"], stream["height"])
+            if dimensions != tuple(meta["cameras"][camera]["resolution"]):
+                raise ValueError(f"Camera dimensions differ from metadata: {ep}:{camera}")
+            if dimensions != tuple(meta["cameras"]["head"]["resolution"]):
+                raise ValueError(f"Three-camera composition requires equal source dimensions: {ep}:{camera}")
+            camera_sources[camera] = str(video)
+            camera_hashes[camera] = file_sha256(video)
         window_starts(len(action), horizon, stride)
         # q and -q represent the same orientation. Group repeated initial conditions.
         if pose[3] < 0:
@@ -104,10 +133,12 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
                 task_success=bool(report["task_success"]),
                 transitions=len(action),
                 source_action=str(path),
-                source_head=str(video),
+                source_head=camera_sources["head"],
+                source_cameras=camera_sources,
+                source_camera_sha256=camera_hashes,
                 source_action_file_sha256=file_sha256(path),
                 original_action_sha256=action_sha256(action),
-                source_head_sha256=file_sha256(video),
+                source_head_sha256=camera_hashes["head"],
                 original_action_dtype=str(action.dtype),
                 state=state,
                 action=action,
@@ -137,7 +168,10 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
             action=entry.pop("action"),
             timestamp=entry.pop("timestamp"),
         )
-        shutil.copy2(entry["source_head"], dest / "head.mp4")
+        for camera, video_path in entry["source_cameras"].items():
+            shutil.copy2(video_path, dest / f"{camera}.mp4")
+            if file_sha256(dest / f"{camera}.mp4") != entry["source_camera_sha256"][camera]:
+                raise ValueError(f"Copied camera video differs from the source: {dest}:{camera}")
         with np.load(dest / "trajectory.npz", allow_pickle=False) as stored:
             if action_sha256(stored["action"]) != entry["original_action_sha256"]:
                 raise ValueError(f"Packaged commands differ from original GISTdata: {dest}")
@@ -148,6 +182,7 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
             "split": "val" if entry["group"] in validation else "train",
             "trajectory": str((dest / "trajectory.npz").relative_to(output)),
             "head_video": str((dest / "head.mp4").relative_to(output)),
+            "camera_videos": {camera: str((dest / f"{camera}.mp4").relative_to(output)) for camera in cameras},
         }
         rows.append(row)
         for start in window_starts(row["transitions"], horizon, stride):
@@ -175,7 +210,21 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
         stride=stride,
         use_state=True,
         normalization="none",
-        camera="head",
+        camera="head" if camera_mode == "head" else "threecam",
+        camera_mode=camera_mode,
+        camera_order=list(cameras),
+        camera_layout=(
+            None
+            if camera_mode == "head"
+            else {
+                "primary": "head",
+                "bottom_left": "left_wrist",
+                "bottom_right": "right_wrist",
+                "composition": "head at native size on top; each wrist resized by 0.5 below; no cropping",
+                "description": "The top view is the head camera. The bottom left and bottom right views are the left-wrist and right-wrist cameras, respectively.",
+                "model_resize": "Native ActionTransformPipeline resolution 256; aspect-preserving resize and reflection padding",
+            }
+        ),
         resolution="256",
         seed=seed,
         validation_fraction=val_fraction,
@@ -187,6 +236,8 @@ def prepare(source: Path, output: Path, expected_episodes=200, horizon=32, strid
     for split, entries in windows.items():
         (output / f"{split}.jsonl").write_text("".join(json.dumps(w) + "\n" for w in entries))
     summary = dict(
+        camera_mode=camera_mode,
+        cameras=list(cameras),
         episodes=len(rows),
         objects=dict(Counter(r["object"] for r in rows)),
         splits=dict(Counter(r["split"] for r in rows)),
@@ -211,10 +262,14 @@ def main():
     p.add_argument("--stride", type=int, default=8)
     p.add_argument("--val-fraction", type=float, default=0.1)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--camera-mode", choices=("head", "threecam"), default="head")
     a = p.parse_args()
     print(
         json.dumps(
-            prepare(a.source, a.output, a.expected_episodes, a.horizon, a.stride, a.val_fraction, a.seed), indent=2
+            prepare(
+                a.source, a.output, a.expected_episodes, a.horizon, a.stride, a.val_fraction, a.seed, a.camera_mode
+            ),
+            indent=2,
         )
     )
 

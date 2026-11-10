@@ -174,3 +174,51 @@ On the configured server, source outputs/GISTdata_action/train_environment.sh
 from the repository root after activating .venv; this file points to the external
 dataset directory and selects the full-generation Edge recipe. Historical validation
 and transfer reports remain under outputs/GISTdata_action/.
+
+Three-camera Edge experiment (600 optimizer steps)
+------------------------------------------------
+  python -m cosmos_framework.scripts.prepare_GISTdata_action_data --source /path/to/GIST_original_root --output /path/to/new/threecam_joint18_original_v1 --camera-mode threecam
+  python -m cosmos_framework.scripts.validate_GISTdata_action_data --bundle /path/to/new/threecam_joint18_original_v1 --tokenizer-folder /path/to/pinned/Edge/snapshot --tokenizer-model edge
+
+The portable bundle retains the original head.mp4, left_wrist.mp4 and
+right_wrist.mp4 bytes. Preparation checks every RGB frame timestamp against
+the 20-Hz observation clock, checks dimensions and hashes all 600 RGB files.
+Depth is not an input. The loader composes simultaneous frames using native
+compose_multiview: head on top at 320x240, left wrist bottom left at 160x120,
+right wrist bottom right at 160x120 (320x360 canvas). No camera is dropped or
+cropped. Native resolution-256 transforms then resize the complete canvas
+with preserved aspect ratio and reflection padding. Camera layout text is
+included in the structured prompt. Deployment must use the SAME composition
+and layout metadata; the original head-only inference CLI assumes one head
+image and is not a direct three-camera inference entry point.
+
+Camera images and measured joints are Isaac Sim observations while executing
+original GIST commands, rather than original GIST sensor images. Commands stay
+byte-identical 18-D absolute right-arm (6) + right-hand (12) joint targets.
+All 200 episodes are packaged: training 183 / validation 17, matching the
+head-only grouped split exactly; windows 4758 / 442. The one unsuccessful
+original demonstration is retained and tagged, as in the head-only bundle.
+
+For training on the configured remote server:
+  source .venv/bin/activate
+  source outputs/GISTdata_action/train_environment_threecam.sh
+  bash examples/launch_sft_action_policy_GISTdata_edge_threecam.sh
+
+New recipe: examples/toml/sft_config/action_policy_GISTdata_edge_threecam.toml.
+600 steps and scheduler cycle [600], accumulation 8, one GPU, per-GPU batch 1,
+LR 2e-5 (fresh action heads 1e-4), warmup 20, BF16 and full activation
+checkpointing. All 28 Edge generation layers plus robot projections train;
+understanding and VAE remain frozen. Effective batch 8 gives 4800 sampled
+training windows, approximately 1.009 passes over 4758 training windows.
+The streaming loader shuffles episode blocks; this is an approximate epoch
+count, not a claim of visiting every window exactly once.
+
+Initialize from the same pinned released Edge base, with a fresh three-camera
+job group/name; the head-only model and its optimizer state are not resumed.
+The old head run's first 200 steps used its original 200-step scheduler before
+it was extended; this new experiment uses a 600-step scheduler from step 0.
+Checkpoints every 200 steps (200,400,600) use about 72 GiB instead of about
+288 GiB at every 50 steps, preserving existing results on the shared volume.
+The configured server uses physical Blackwell GPU 1 and logs a separate run in
+https://wandb.ai/inrol/rb_xhand_dish_pnp . Source train_environment_head.sh to
+restore the previous head-only environment after the server switch.

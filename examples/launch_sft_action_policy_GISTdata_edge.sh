@@ -17,6 +17,6 @@ print(report['snapshot'])
 PY
 )"
 export GISTDATA_TOKENIZER_MODEL=edge
-export SFT_TOML_FILE=examples/toml/sft_config/action_policy_GISTdata_edge.toml
+export SFT_TOML_FILE="${SFT_TOML_FILE:-examples/toml/sft_config/action_policy_GISTdata_edge.toml}"
 export NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 exec bash examples/launch_sft_action_policy_GISTdata_nano.sh "$@"

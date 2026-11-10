@@ -1,0 +1,55 @@
+# 20-Hz synchronized head + left_wrist + right_wrist cameras + instruction + measured joints -> future video and 18-D commands.
+# Requires GISTDATA_ACTION_BUNDLE, BASE_CHECKPOINT_PATH (Cosmos3-Edge DCP), WAN_VAE_PATH.
+# Official DROID-to-Edge generation/projection scope, with GISTdata-specific LR/batch/schedule.
+# Full 28-layer generation pathway, including k_norm_und_for_gen; understanding and VAE frozen.
+[job]
+task = "vfm"
+experiment = "action_policy_GISTdata_edge_threecam"
+project = "rb_xhand_dish_pnp"
+group = "GISTdata_threecam_joint18"
+name = "action_policy_GISTdata_edge_threecam"
+wandb_mode = "online"
+
+[model]
+precision = "bfloat16"
+max_num_tokens_after_packing = 8192
+
+[model.parallelism]
+data_parallel_shard_degree = -1
+data_parallel_replicate_degree = 1
+
+[model.activation_checkpointing]
+mode = "full"
+
+[model.compile]
+enabled = false
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[optimizer]
+lr = 2.0e-5
+lr_multipliers = { action2llm = 5.0, llm2action = 5.0, action_modality_embed = 5.0 }
+
+[scheduler]
+cycle_lengths = [600]
+warm_up_steps = [20]
+f_max = [1.0]
+f_min = [0.0]
+f_start = [0.0]
+
+[trainer]
+max_iter = 600
+grad_accum_iter = 8
+logging_iter = 1
+
+[trainer.callbacks.compile_tokenizer]
+enabled = false
+
+[dataloader_train]
+max_samples_per_batch = 1
+max_sequence_length = 8192
+
+[checkpoint]
+load_path = "${oc.env:BASE_CHECKPOINT_PATH}"
+save_iter = 200
