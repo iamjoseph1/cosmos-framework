@@ -11,7 +11,11 @@ fi
 test -f "$WAN_VAE_PATH" || { echo "ERROR: WAN_VAE_PATH does not exist" >&2; exit 1; }
 python -m cosmos_framework.scripts.validate_GISTdata_action_data --bundle "$GISTDATA_ACTION_BUNDLE"
 export IMAGINAIRE_OUTPUT_ROOT="${OUTPUT_ROOT:-$PWD/outputs/train}"
-export COSMOS_INTERNAL=0 COSMOS_TRAINING=1 WANDB_MODE=disabled
+export COSMOS_INTERNAL=0 COSMOS_TRAINING=1
+export WANDB_ENTITY="${WANDB_ENTITY:-inrol}"
+# The recipe's job.wandb_mode controls logging; do not force disabled here.
+sft_toml="${SFT_TOML_FILE:-examples/toml/sft_config/action_policy_GISTdata_nano.toml}"
+test -f "$sft_toml" || { echo "ERROR: SFT_TOML_FILE does not exist" >&2; exit 1; }
 torchrun --standalone --nproc-per-node="${NPROC_PER_NODE:-2}" \
   -m cosmos_framework.scripts.train \
-  --sft-toml=examples/toml/sft_config/action_policy_GISTdata_nano.toml "$@"
+  --sft-toml="$sft_toml" "$@"

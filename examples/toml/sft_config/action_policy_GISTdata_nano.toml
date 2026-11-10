@@ -4,10 +4,10 @@
 [job]
 task = "vfm"
 experiment = "action_policy_GISTdata_nano"
-project = "cosmos3_action"
+project = "rb_xhand_dish_pnp"
 group = "GISTdata_head_joint18"
 name = "action_policy_GISTdata_nano"
-wandb_mode = "disabled"
+wandb_mode = "online"
 
 [model]
 precision = "bfloat16"
@@ -32,6 +32,9 @@ lr = 2.0e-5
 [scheduler]
 cycle_lengths = [200]
 warm_up_steps = [20]
+f_max = [1.0]
+f_min = [0.0]
+f_start = [0.0]
 
 [trainer]
 max_iter = 200

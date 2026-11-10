@@ -14,7 +14,9 @@ from cosmos_framework.utils.lazy_config import LazyCall as L
 
 action_policy_GISTdata_nano = copy.deepcopy(action_policy_droid_nano)
 c = action_policy_GISTdata_nano
-c.job.update(project="cosmos3_action", group="GISTdata_head_joint18", name="action_policy_GISTdata_nano")
+c.job.update(
+    project="rb_xhand_dish_pnp", group="GISTdata_head_joint18", name="action_policy_GISTdata_nano", wandb_mode="online"
+)
 c.model.config.num_embodiment_domains = 34  # new domain 33; do not recycle retired IDs
 c.model.config.resolution = "256"
 c.model.config.max_num_tokens_after_packing = 8192

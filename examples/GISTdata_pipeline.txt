@@ -35,12 +35,52 @@ Training requires the locked Python 3.13 training environment, a converted BASE
 Cosmos3-Nano DCP checkpoint and the matched Wan2.2 VAE. The Sim-Transfer checkpoint
 cannot initialize this policy. CPU data/config checks do not establish GPU fit.
 
+Prepare the missing base DCP checkpoint (CPU conversion, includes HF download):
+  CUDA_VISIBLE_DEVICES="" python -m cosmos_framework.scripts.convert_model_to_dcp --checkpoint-path Cosmos3-Nano -o "$BASE_CHECKPOINT_PATH"
+
   export GISTDATA_ACTION_BUNDLE="$HOME/datasets/GISTdata/head_joint18_original_v1"
   export BASE_CHECKPOINT_PATH=/path/to/Cosmos3-Nano-DCP
   export WAN_VAE_PATH=/path/to/Wan2.2_VAE.pth
   export OUTPUT_ROOT="$PWD/outputs/train"
   export NPROC_PER_NODE=2
   bash examples/launch_sft_action_policy_GISTdata_nano.sh
+
+W&B logging is online under inrol/rb_xhand_dish_pnp. Set WANDB_ENTITY=inrol;
+WANDB_PROJECT can override the recipe project, so keep it rb_xhand_dish_pnp.
+The framework logs its resolved config and native loss/optimizer metrics.
+The train/val split is retained, but automatic validation is disabled in this
+initial recipe; held-out task success is not measured by the training logger.
+
+Current single-GPU option:
+  export SFT_TOML_FILE=examples/toml/sft_config/action_policy_GISTdata_nano_heads.toml
+  export NPROC_PER_NODE=1
+  export CUDA_VISIBLE_DEVICES=<UUID-of-an-idle-Blackwell-GPU>
+  bash examples/launch_sft_action_policy_GISTdata_nano.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_heads_smoke
+  bash examples/launch_sft_action_policy_GISTdata_nano.sh -- job.name=GISTdata_heads_v1
+
+The heads recipe freezes both MoT language pathways and trains time_embedder,
+vae2llm, llm2vae, action2llm, llm2action and action_modality_embed. Future video
+and absolute joint targets remain joint WAM supervision. The native FP32
+parameter storage and BF16 compute policy are retained.
+This smaller parameter scope is a separate option, not full generation-tower SFT.
+Full generation-tower SFT uses action_policy_GISTdata_nano.toml. Its language
+weights plus generation gradients/Adam states alone need about 134 GiB before
+activations, VAE and other heads, so a single 96-GB GPU cannot fit that recipe.
+Use sufficiently free GPUs with FSDP for that recipe; smoke-test before a full run.
+
+Hyperparameters (edit the selected TOML; CLI Hydra overrides apply last):
+  [optimizer].lr = 2e-5; [scheduler].f_max = [1.0] makes this the peak LR.
+  [trainer].max_iter = 200, grad_accum_iter = 8, logging_iter = 1.
+  [scheduler].cycle_lengths = [200], warm_up_steps = [20].
+  [checkpoint].save_iter = 50.
+  [dataloader_train].max_samples_per_batch = 1 (per rank).
+  [model.activation_checkpointing].mode = "full".
+  Effective batch: samples per microbatch x GPU count x grad_accum_iter.
+  With one GPU and the current packing cap, effective batch = 8 windows.
+  Keep scheduler.cycle_lengths aligned with trainer.max_iter when extending a run.
+  Resolution/domain/VAE duration live in the experiment Python files. Changing
+  the 32-step horizon requires rebuilding data and matching the VAE duration;
+  changing the TOML optimizer settings does not require data preparation again.
 
 Validate configuration without starting training or loading model weights:
   python -m cosmos_framework.scripts.train --sft-toml=examples/toml/sft_config/action_policy_GISTdata_nano.toml --dryrun
@@ -63,5 +103,5 @@ are transferred separately into $HOME/datasets/GISTdata/. Training checkpoints
 and logs stay under the repository's ignored outputs/train/ directory.
 On the configured server, source outputs/GISTdata_action/train_environment.sh
 from the repository root after activating .venv; this file points to the external
-dataset directory. Historical validation and transfer reports remain under
+dataset directory and selects the single-GPU heads recipe. Historical validation and transfer reports remain under
 outputs/GISTdata_action/.
