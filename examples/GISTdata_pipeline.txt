@@ -74,6 +74,10 @@ Model/processor revision is pinned together in utils/GISTdata_edge_contract.py.
 The preparation command verifies provenance before reusing a converted DCP and
 refuses to overwrite partial or unmatched checkpoints. It downloads the pinned
 HF snapshot and runs conversion on CPU, without taking another GPU.
+If Xet transfer stalls, prefix the preparation command with HF_HUB_DISABLE_XET=1
+to use the supported HTTP download path. Keep the cache for resume. The configured
+server environment also adds the existing pinned uv and CUDA 12.8 binaries to PATH,
+which native processor/checkpoint helpers need in noninteractive SSH sessions.
 The Edge launcher validates all original trajectories and Edge-tokenized samples
 before starting torchrun. It refuses a Nano or unmatched base checkpoint.
 The data bundle, original actions, state prefix, 32-action/33-frame horizon and
