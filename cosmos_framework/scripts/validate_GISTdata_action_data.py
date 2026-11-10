@@ -13,7 +13,9 @@ from cosmos_framework.data.generator.action.datasets.GISTdata_npz_dataset import
 from cosmos_framework.utils.GISTdata_action_contract import action_sha256, file_sha256
 
 
-def validate(bundle: Path, tokenizer_folder: Path | None = None):
+def validate(bundle: Path, tokenizer_folder: Path | None = None, tokenizer_model: str = "nano"):
+    if tokenizer_model not in ("nano", "edge"):
+        raise ValueError("tokenizer_model must be nano or edge")
     m = json.loads((bundle / "manifest.json").read_text())
     groups = {s: {r["group"] for r in m["episodes"] if r["split"] == s} for s in ("train", "val")}
     if groups["train"] & groups["val"]:
@@ -31,7 +33,11 @@ def validate(bundle: Path, tokenizer_folder: Path | None = None):
         if file_sha256(bundle / r["head_video"]) != r["source_head_sha256"]:
             raise ValueError(f"Head video was changed: {r['episode_id']}")
     tokenizer = None
-    if tokenizer_folder is not None:
+    if tokenizer_folder is not None and tokenizer_model == "edge":
+        from cosmos_framework.data.generator.processors import build_processor
+
+        tokenizer = {"_target_": build_processor, "tokenizer_type": str(tokenizer_folder)}
+    elif tokenizer_folder is not None:
         from cosmos_framework.configs.base.defaults.reasoner import create_qwen2_tokenizer_with_download
 
         tokenizer = {
@@ -64,15 +70,22 @@ def validate(bundle: Path, tokenizer_folder: Path | None = None):
                 "state_condition_rows": [0],
             }
         )
-    return {"passed": True, "episodes": len(m["episodes"]), "tokenized": tokenizer is not None, "samples": examples}
+    return {
+        "passed": True,
+        "episodes": len(m["episodes"]),
+        "tokenized": tokenizer is not None,
+        "tokenizer_model": tokenizer_model,
+        "samples": examples,
+    }
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--bundle", type=Path, required=True)
     p.add_argument("--tokenizer-folder", type=Path)
+    p.add_argument("--tokenizer-model", choices=("nano", "edge"), default="nano")
     a = p.parse_args()
-    print(json.dumps(validate(a.bundle, a.tokenizer_folder), indent=2))
+    print(json.dumps(validate(a.bundle, a.tokenizer_folder, a.tokenizer_model), indent=2))
 
 
 if __name__ == "__main__":

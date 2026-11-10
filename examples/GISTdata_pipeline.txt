@@ -51,7 +51,45 @@ The framework logs its resolved config and native loss/optimizer metrics.
 The train/val split is retained, but automatic validation is disabled in this
 initial recipe; held-out task success is not measured by the training logger.
 
-Current server recipe: two-GPU last-six-generation-layer tuning
+Current server recipe: complete Edge generation pathway + robot projections
+  source .venv/bin/activate
+  source outputs/GISTdata_action/train_environment.sh
+  python -m cosmos_framework.scripts.prepare_GISTdata_edge_checkpoint --output "$BASE_CHECKPOINT_PATH"
+  bash examples/launch_sft_action_policy_GISTdata_edge.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_edge_smoke
+  bash examples/launch_sft_action_policy_GISTdata_edge.sh -- job.name=GISTdata_edge_v1
+
+This follows the trainable scope of NVIDIA's DROID-to-Edge post-training guide:
+https://developer.nvidia.com/blog/post-train-nvidia-cosmos-3-edge-for-on-device-robot-control/
+All 28 generation layers, the final generation norm, generation-specific und-K
+cross-attention norms, time_embedder, vae2llm, llm2vae, action2llm, llm2action and
+action_modality_embed train. Understanding weights and the VAE stay frozen.
+1,423,911,744 parameters train. Fresh action projections use the action recipe's
+5x LR multiplier. The 2e-5 base LR, batch 8, 200-step schedule, 256 resolution and
+20-Hz 18-D embodiment are GISTdata adaptation defaults, not official tuning for
+this dataset or a reproduction of the large-scale DROID run.
+
+The server selects the idle physical Blackwell GPU 1 by UUID and one rank.
+Configuration: examples/toml/sft_config/action_policy_GISTdata_edge.toml.
+Model/processor revision is pinned together in utils/GISTdata_edge_contract.py.
+The preparation command verifies provenance before reusing a converted DCP and
+refuses to overwrite partial or unmatched checkpoints. It downloads the pinned
+HF snapshot and runs conversion on CPU, without taking another GPU.
+The Edge launcher validates all original trajectories and Edge-tokenized samples
+before starting torchrun. It refuses a Nano or unmatched base checkpoint.
+The data bundle, original actions, state prefix, 32-action/33-frame horizon and
+joint order are reused. W&B stays online in inrol/rb_xhand_dish_pnp.
+
+Edge hyperparameters: optimizer.lr=2e-5 (action projections=1e-4), max_iter=200,
+grad_accum_iter=8, warm_up_steps=[20], cycle_lengths=[200], save_iter=50.
+Effective batch = 1 window/rank x 1 rank x 8 accumulations = 8 windows.
+Optional two-GPU FSDP: explicitly select two healthy GPU UUIDs, set
+NPROC_PER_NODE=2, and pass trainer.grad_accum_iter=4 to keep effective batch 8.
+For local inference, export the trained Edge model with its processor and vision
+encoder and provide the matched VAE locally. Never copy only the trained layers.
+BF16 inference on the RTX 5070 Ti 16GB still needs a real peak-memory/latency check;
+the release's approx. 8.5-GiB weight files do not include runtime allocations.
+
+Alternative Nano recipe: two-GPU last-six-generation-layer tuning
   source .venv/bin/activate
   source outputs/GISTdata_action/train_environment.sh
   bash examples/launch_sft_action_policy_GISTdata_nano_last6.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_last6_smoke
@@ -88,7 +126,7 @@ weights plus generation gradients/Adam states alone need about 134 GiB before
 activations, VAE and other heads, so a single 96-GB GPU cannot fit that recipe.
 Use sufficiently free GPUs with FSDP for that recipe; smoke-test before a full run.
 
-Hyperparameters (edit the selected TOML; CLI Hydra overrides apply last):
+Nano-last6 hyperparameters (edit the selected TOML; CLI Hydra overrides apply last):
   [optimizer].lr = 2e-5; [scheduler].f_max = [1.0] makes this the peak LR.
   [trainer].max_iter = 200, grad_accum_iter = 4, logging_iter = 1 (last6).
   [scheduler].cycle_lengths = [200], warm_up_steps = [20].
@@ -124,5 +162,5 @@ are transferred separately into $HOME/datasets/GISTdata/. Training checkpoints
 and logs stay under the repository's ignored outputs/train/ directory.
 On the configured server, source outputs/GISTdata_action/train_environment.sh
 from the repository root after activating .venv; this file points to the external
-dataset directory and selects the two-GPU last6 recipe. Historical validation
+dataset directory and selects the full-generation Edge recipe. Historical validation
 and transfer reports remain under outputs/GISTdata_action/.

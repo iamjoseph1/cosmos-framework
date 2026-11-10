@@ -3,7 +3,7 @@
 """Predict absolute right-arm/hand commands from a current head image and joints.
 
 --dry-run validates the input contract without weights or CUDA. Real inference
-requires a checkpoint trained with action_policy_GISTdata_nano; the base model
+requires a checkpoint trained with a GISTdata action-policy recipe; the base model
 does not have a trained projector for this robot. No robot commands are sent.
 """
 
