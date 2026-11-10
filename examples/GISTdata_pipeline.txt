@@ -11,7 +11,11 @@ Provenance and naming
   Preparing this bundle does not execute training or produce trained weights.
   The input report filename is preserved for compatibility with existing data.
 
-Prepared bundle: outputs/GISTdata_action/head_joint18_original_v1
+Data lives outside the repository, independently of training outputs:
+  $HOME/datasets/GISTdata/original_actions/
+  $HOME/datasets/GISTdata/head_joint18_original_v1/
+
+Prepared bundle: $HOME/datasets/GISTdata/head_joint18_original_v1
   200 episodes: 100 bowl + 100 mug. Train/validation: 183/17 episodes and
   4758/442 windows. The unsuccessful ycb_mug/data_0071 is retained and tagged.
   Each WAM window conditions on the current head image, task instruction and
@@ -31,10 +35,10 @@ Training requires the locked Python 3.13 training environment, a converted BASE
 Cosmos3-Nano DCP checkpoint and the matched Wan2.2 VAE. The Sim-Transfer checkpoint
 cannot initialize this policy. CPU data/config checks do not establish GPU fit.
 
-  export GISTDATA_ACTION_BUNDLE=/path/to/bundle
+  export GISTDATA_ACTION_BUNDLE="$HOME/datasets/GISTdata/head_joint18_original_v1"
   export BASE_CHECKPOINT_PATH=/path/to/Cosmos3-Nano-DCP
   export WAN_VAE_PATH=/path/to/Wan2.2_VAE.pth
-  export OUTPUT_ROOT=/path/to/training_outputs
+  export OUTPUT_ROOT="$PWD/outputs/train"
   export NPROC_PER_NODE=2
   bash examples/launch_sft_action_policy_GISTdata_nano.sh
 
@@ -54,5 +58,10 @@ Outputs: predicted_actions.npz, predicted_actions.json (32 x 18 absolute targets
 predicted_future.mp4 and request.json. Commands are never sent to a robot.
 Use --dry-run without checkpoint arguments to inspect inputs and condition masks.
 
-Code and configuration belong in Git. Original datasets, prepared bundles and
-training outputs stay under ignored outputs/ and are transferred separately.
+Code and configuration belong in Git. Original datasets and prepared bundles
+are transferred separately into $HOME/datasets/GISTdata/. Training checkpoints
+and logs stay under the repository's ignored outputs/train/ directory.
+On the configured server, source outputs/GISTdata_action/train_environment.sh
+from the repository root after activating .venv; this file points to the external
+dataset directory. Historical validation and transfer reports remain under
+outputs/GISTdata_action/.
