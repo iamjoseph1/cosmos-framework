@@ -1,0 +1,58 @@
+GISTdata head-camera action pipeline
+
+Provenance and naming
+  GISTdata identifies the GIST-provided original action trajectories.
+  Original float32 absolute joint commands are retained byte-for-byte. The head
+  RGB and measured proprioception are recordings in Isaac Sim while executing
+  those trajectories (red_objects_defaultscene_3cam), not GIST camera recordings.
+  No generated, recolored, or otherwise edited videos are used.
+  manifest.json records provenance, original action/file hashes and head-video
+  hashes. The validator rejects changed commands or videos.
+  Preparing this bundle does not execute training or produce trained weights.
+  The input report filename is preserved for compatibility with existing data.
+
+Prepared bundle: outputs/GISTdata_action/head_joint18_original_v1
+  200 episodes: 100 bowl + 100 mug. Train/validation: 183/17 episodes and
+  4758/442 windows. The unsuccessful ycb_mug/data_0071 is retained and tagged.
+  Each WAM window conditions on the current head image, task instruction and
+  measured 18-D joint state, supervising 32 future commands and head images.
+  Units: radians; joint order: manifest.json joint_names; control rate: 20 Hz.
+  The initial state prefix is not a robot command. Commands are not normalized.
+  Source videos remain byte-identical; training pads 320x240 images to 320x256.
+
+Re-create data in a NEW directory (existing outputs are refused):
+  bash examples/prepare_GISTdata_action.sh /path/to/GISTdata /path/to/new_bundle
+
+Validate in an installed Cosmos environment:
+  python -m cosmos_framework.scripts.validate_GISTdata_action_data --bundle /path/to/bundle
+  Add --tokenizer-folder /path/to/Nano/text_tokenizer to verify tokenized samples.
+
+Training requires the locked Python 3.13 training environment, a converted BASE
+Cosmos3-Nano DCP checkpoint and the matched Wan2.2 VAE. The Sim-Transfer checkpoint
+cannot initialize this policy. CPU data/config checks do not establish GPU fit.
+
+  export GISTDATA_ACTION_BUNDLE=/path/to/bundle
+  export BASE_CHECKPOINT_PATH=/path/to/Cosmos3-Nano-DCP
+  export WAN_VAE_PATH=/path/to/Wan2.2_VAE.pth
+  export OUTPUT_ROOT=/path/to/training_outputs
+  export NPROC_PER_NODE=2
+  bash examples/launch_sft_action_policy_GISTdata_nano.sh
+
+Validate configuration without starting training or loading model weights:
+  python -m cosmos_framework.scripts.train --sft-toml=examples/toml/sft_config/action_policy_GISTdata_nano.toml --dryrun
+
+Start with a bounded GPU smoke; fit and convergence have not been measured:
+  bash examples/launch_sft_action_policy_GISTdata_nano.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_smoke
+
+The default recipe holds out validation episodes. The dataset factory supports
+split=all if deliberately training on all 200 episodes without a held-out set.
+
+After training, predict commands and future video from CURRENT inputs only:
+  python -m cosmos_framework.scripts.infer_GISTdata_actions --image /path/to/current_head.png --proprioception /path/to/current_joint_angles.json --instruction "Using your right arm and right hand, pick up the red mug and place it at the designated drop-off position on the table." --checkpoint-path /path/to/run/checkpoints/iter_000000200 --config-file /path/to/run/config.yaml --output /path/to/new_prediction
+
+Outputs: predicted_actions.npz, predicted_actions.json (32 x 18 absolute targets),
+predicted_future.mp4 and request.json. Commands are never sent to a robot.
+Use --dry-run without checkpoint arguments to inspect inputs and condition masks.
+
+Code and configuration belong in Git. Original datasets, prepared bundles and
+training outputs stay under ignored outputs/ and are transferred separately.

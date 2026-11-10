@@ -1,0 +1,50 @@
+# 20-Hz head camera + instruction + measured joints -> future video and 18-D commands.
+# Requires GISTDATA_ACTION_BUNDLE, BASE_CHECKPOINT_PATH (Cosmos3-Nano DCP), WAN_VAE_PATH.
+# This is an adaptation starting point; GPU fit and convergence are not certified.
+[job]
+task = "vfm"
+experiment = "action_policy_GISTdata_nano"
+project = "cosmos3_action"
+group = "GISTdata_head_joint18"
+name = "action_policy_GISTdata_nano"
+wandb_mode = "disabled"
+
+[model]
+precision = "bfloat16"
+max_num_tokens_after_packing = 8192
+
+[model.parallelism]
+data_parallel_shard_degree = -1
+data_parallel_replicate_degree = 1
+
+[model.activation_checkpointing]
+mode = "full"
+
+[model.compile]
+enabled = false
+
+[model.tokenizer]
+vae_path = "${oc.env:WAN_VAE_PATH}"
+
+[optimizer]
+lr = 2.0e-5
+
+[scheduler]
+cycle_lengths = [200]
+warm_up_steps = [20]
+
+[trainer]
+max_iter = 200
+grad_accum_iter = 8
+logging_iter = 1
+
+[trainer.callbacks.compile_tokenizer]
+enabled = false
+
+[dataloader_train]
+max_samples_per_batch = 1
+max_sequence_length = 8192
+
+[checkpoint]
+load_path = "${oc.env:BASE_CHECKPOINT_PATH}"
+save_iter = 50
