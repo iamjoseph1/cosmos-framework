@@ -51,7 +51,27 @@ The framework logs its resolved config and native loss/optimizer metrics.
 The train/val split is retained, but automatic validation is disabled in this
 initial recipe; held-out task success is not measured by the training logger.
 
-Current single-GPU option:
+Current server recipe: two-GPU last-six-generation-layer tuning
+  source .venv/bin/activate
+  source outputs/GISTdata_action/train_environment.sh
+  bash examples/launch_sft_action_policy_GISTdata_nano_last6.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_last6_smoke
+  bash examples/launch_sft_action_policy_GISTdata_nano_last6.sh -- job.name=GISTdata_last6_v1
+
+The server environment selects physical GPUs 1 and 3 by UUID. The dedicated
+launcher requires two distinct visible devices and always launches two ranks.
+The last6 experiment trains generation attention, MLP and normalization weights
+in layers 30-35 (zero-based), plus the same video/action projections as heads.
+Understanding weights and generation layers 0-29 remain frozen. The native
+optimizer selects 1,195,061,056 parameters, including with activation checkpoint
+wrappers present. VAE, joint order, raw commands and WAM conditioning are unchanged.
+Hyperparameters: examples/toml/sft_config/action_policy_GISTdata_nano_last6.toml.
+Parameter selection: action_policy_GISTdata_nano_last6.py in the experiment folder.
+FP32 parameter/gradient/Adam memory has an estimated 34.94-GiB lower bound per
+rank; activations, VAE, unsharded buffers and CUDA allocations require more.
+Actual model GPU fit is not established by CPU scope/config checks. Run the
+two-step smoke after converting the base checkpoint before the main training.
+
+Alternative single-GPU projection-only option:
   export SFT_TOML_FILE=examples/toml/sft_config/action_policy_GISTdata_nano_heads.toml
   export NPROC_PER_NODE=1
   export CUDA_VISIBLE_DEVICES=<UUID-of-an-idle-Blackwell-GPU>
@@ -70,20 +90,21 @@ Use sufficiently free GPUs with FSDP for that recipe; smoke-test before a full r
 
 Hyperparameters (edit the selected TOML; CLI Hydra overrides apply last):
   [optimizer].lr = 2e-5; [scheduler].f_max = [1.0] makes this the peak LR.
-  [trainer].max_iter = 200, grad_accum_iter = 8, logging_iter = 1.
+  [trainer].max_iter = 200, grad_accum_iter = 4, logging_iter = 1 (last6).
   [scheduler].cycle_lengths = [200], warm_up_steps = [20].
   [checkpoint].save_iter = 50.
   [dataloader_train].max_samples_per_batch = 1 (per rank).
   [model.activation_checkpointing].mode = "full".
   Effective batch: samples per microbatch x GPU count x grad_accum_iter.
-  With one GPU and the current packing cap, effective batch = 8 windows.
+  With two GPUs, the current packing cap and last6 accumulation, effective batch
+  = 8 windows. The single-GPU heads recipe uses grad_accum_iter=8 instead.
   Keep scheduler.cycle_lengths aligned with trainer.max_iter when extending a run.
   Resolution/domain/VAE duration live in the experiment Python files. Changing
   the 32-step horizon requires rebuilding data and matching the VAE duration;
   changing the TOML optimizer settings does not require data preparation again.
 
 Validate configuration without starting training or loading model weights:
-  python -m cosmos_framework.scripts.train --sft-toml=examples/toml/sft_config/action_policy_GISTdata_nano.toml --dryrun
+  python -m cosmos_framework.scripts.train --sft-toml=examples/toml/sft_config/action_policy_GISTdata_nano_last6.toml --dryrun
 
 Start with a bounded GPU smoke; fit and convergence have not been measured:
   bash examples/launch_sft_action_policy_GISTdata_nano.sh -- trainer.max_iter=2 trainer.grad_accum_iter=1 checkpoint.save_iter=2 job.name=GISTdata_smoke
@@ -103,5 +124,5 @@ are transferred separately into $HOME/datasets/GISTdata/. Training checkpoints
 and logs stay under the repository's ignored outputs/train/ directory.
 On the configured server, source outputs/GISTdata_action/train_environment.sh
 from the repository root after activating .venv; this file points to the external
-dataset directory and selects the single-GPU heads recipe. Historical validation and transfer reports remain under
-outputs/GISTdata_action/.
+dataset directory and selects the two-GPU last6 recipe. Historical validation
+and transfer reports remain under outputs/GISTdata_action/.
