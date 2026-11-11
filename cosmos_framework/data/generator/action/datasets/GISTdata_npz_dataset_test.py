@@ -11,6 +11,7 @@ import torch
 
 from cosmos_framework.data.generator.action.datasets.GISTdata_npz_dataset import (
     GISTdataActionDataset,
+    decode_head,
     get_GISTdata_action_sft_dataset,
 )
 from cosmos_framework.inference.GISTdata_action import build_GISTdata_action_batch
@@ -209,3 +210,48 @@ def test_threecam_rejects_unsynchronized_camera_before_output_creation(prepared)
     with pytest.raises(ValueError, match="clock mismatch.*left_wrist"):
         prepare(root, output, expected_episodes=4, horizon=8, camera_mode="threecam")
     assert not output.exists()
+
+
+def test_threecam_training_and_inference_preserve_layout_prompt_and_conditions(threecam):
+    _, _, bundle = threecam
+    raw_dataset = GISTdataActionDataset(str(bundle), "all")
+    index = 1
+    raw = raw_dataset[index]
+    window = raw_dataset.windows[index]
+    episode = raw_dataset.episodes[window["episode_id"]]
+    views = {
+        name: torch.from_numpy(decode_head(str(bundle / path))[window["start"]].copy()).permute(2, 0, 1)
+        for name, path in episode["camera_videos"].items()
+    }
+    train = get_GISTdata_action_sft_dataset(str(bundle), "all", cfg_dropout_rate=0)[index]
+    infer = build_GISTdata_action_batch(
+        views["head"],
+        raw["action"][0],
+        raw["ai_caption"],
+        horizon=8,
+        device="cpu",
+        left_wrist_rgb=views["left_wrist"],
+        right_wrist_rgb=views["right_wrist"],
+    )
+    assert train["ai_caption"] == json.loads(infer["ai_caption"][0])
+    torch.testing.assert_close(train["video"][:, 0], infer["video"][0][0][:, 0])
+    torch.testing.assert_close(train["action"][0], infer["action"][0][0][0])
+    assert torch.count_nonzero(infer["action"][0][0][1:]) == 0
+    assert infer["sequence_plan"][0].condition_frame_indexes_vision == [0]
+    assert infer["sequence_plan"][0].condition_frame_indexes_action == [0]
+
+
+def test_inference_rejects_partial_or_inconsistent_camera_set():
+    head = torch.zeros(3, 48, 64, dtype=torch.uint8)
+    state = torch.zeros(18)
+    with pytest.raises(ValueError, match="both wrist"):
+        build_GISTdata_action_batch(head, state, "Pick up the mug.", device="cpu", left_wrist_rgb=head)
+    with pytest.raises(ValueError, match="matching native dimensions"):
+        build_GISTdata_action_batch(
+            head,
+            state,
+            "Pick up the mug.",
+            device="cpu",
+            left_wrist_rgb=head,
+            right_wrist_rgb=torch.zeros(3, 24, 32, dtype=torch.uint8),
+        )

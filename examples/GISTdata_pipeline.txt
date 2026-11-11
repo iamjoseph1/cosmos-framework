@@ -190,8 +190,8 @@ cropped. Native resolution-256 transforms then resize the complete canvas
 with preserved aspect ratio and reflection padding to 256x256 (content
 256 high x 228 wide, right padding 28). Camera layout text is
 included in the structured prompt. Deployment must use the SAME composition
-and layout metadata; the original head-only inference CLI assumes one head
-image and is not a direct three-camera inference entry point.
+and layout metadata; infer_GISTdata_actions now accepts both wrist-image
+flags for this mode. See examples/GISTdata_inference.txt for local commands.
 
 Camera images and measured joints are Isaac Sim observations while executing
 original GIST commands, rather than original GIST sensor images. Commands stay

@@ -21,6 +21,8 @@ from cosmos_framework.utils.GISTdata_action_contract import (
     DOMAIN_NAME,
     FPS,
     INSTRUCTIONS,
+    THREECAM_DESCRIPTION,
+    THREECAM_ORDER,
     action_sha256,
     file_sha256,
     window_starts,
@@ -39,7 +41,7 @@ def prepare(
 ):
     if camera_mode not in ("head", "threecam"):
         raise ValueError("camera_mode must be head or threecam")
-    cameras = ("head",) if camera_mode == "head" else ("head", "left_wrist", "right_wrist")
+    cameras = ("head",) if camera_mode == "head" else THREECAM_ORDER
     source, output = source.resolve(), output.resolve()
     if not 0 < val_fraction < 1:
         raise ValueError("val_fraction must be between zero and one")
@@ -221,7 +223,7 @@ def prepare(
                 "bottom_left": "left_wrist",
                 "bottom_right": "right_wrist",
                 "composition": "head at native size on top; each wrist resized by 0.5 below; no cropping",
-                "description": "The top view is the head camera. The bottom left and bottom right views are the left-wrist and right-wrist cameras, respectively.",
+                "description": THREECAM_DESCRIPTION,
                 "model_resize": "Native ActionTransformPipeline resolution 256; aspect-preserving resize and reflection padding",
             }
         ),

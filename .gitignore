@@ -218,3 +218,6 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Local robot observations used for GISTdata policy inference.
+/inputs/GISTdata/

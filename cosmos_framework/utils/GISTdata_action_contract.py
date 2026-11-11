@@ -10,6 +10,11 @@ import numpy as np
 DOMAIN_NAME = "gistdata_joint_pos"
 ACTION_DIM = 18
 FPS = 20
+THREECAM_ORDER = ("head", "left_wrist", "right_wrist")
+THREECAM_DESCRIPTION = (
+    "The top view is the head camera. The bottom left and bottom right views are the "
+    "left-wrist and right-wrist cameras, respectively."
+)
 INSTRUCTIONS = {
     "ycb_bowl": "Using your right arm and right hand, pick up the red bowl and place it at the designated drop-off position on the table.",
     "ycb_mug": "Using your right arm and right hand, pick up the red mug and place it at the designated drop-off position on the table.",

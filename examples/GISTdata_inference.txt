@@ -1,0 +1,100 @@
+GISTdata Edge action-policy inference on the local RTX 5070 Ti
+
+The two downloaded final checkpoints are stored under:
+  outputs/checkpoints/GISTdata/headcam_edge_600/
+  outputs/checkpoints/GISTdata/threecam_edge_600/
+Each contains checkpoints/iter_000000600/{model,optim,scheduler,trainer} and the
+unaltered config.remote.yaml. Only model/ is loaded for inference; optimizer
+and scheduler state are retained for possible training resumption.
+config.local.yaml keeps the trained architecture and replaces remote asset
+paths with the shared assets/ directory. DCP-to-HF export is not required.
+
+Pipeline:
+  Current synchronized RGB + one task instruction + current measured joints
+  -> native ActionTransformPipeline, with only time 0 image/state conditioned
+  -> trained Edge WAM jointly denoises future visual latents and joint actions
+  -> remove the measured-state prefix and unused padded channels
+  -> 32 x 18 absolute joint-position targets (radians), 20 Hz, 1.6 seconds.
+Future images are prediction targets, not observed inputs. The actions are
+jointly generated with future vision, rather than inferred by a second model
+from an already rendered movie. Future video has 33 frames including time 0.
+
+Headcam uses one head RGB frame. Threecam uses head above left_wrist and
+right_wrist, matching the training canvas exactly. All three source images
+must have the same native dimensions (the dataset uses 320x240) and timestamp.
+The threecam canvas is resized/padded to 256x256 by the same native transform.
+Do not pass a head-only image to the threecam checkpoint or duplicate head as
+both wrists; the CLI checks the selected camera mode against the local config.
+
+A synchronized HELD-OUT example has been created at:
+  inputs/GISTdata/example_current/
+  head.png, left_wrist.png, right_wrist.png
+  proprioception.json: list of 18 current measured joint angles, radians
+  joint_names.json: the exact canonical 6 right-arm + 12 right-hand joint order
+  instruction.txt: a one-sentence task instruction
+  source.json: ycb_bowl/data_0041, validation split, frame 80 (4.0 seconds)
+No future observation or ground-truth action is supplied to inference.
+
+Run from the repository root:
+  cd /home/dyros/inrol_ws/src/cosmos-framework
+  source .venv-cosmos3-infer/bin/activate
+  export CUDA_VISIBLE_DEVICES=0
+  bash examples/infer_GISTdata_edge.sh headcam inputs/GISTdata/example_current outputs/GISTdata_inference/headcam_run1
+  bash examples/infer_GISTdata_edge.sh threecam inputs/GISTdata/example_current outputs/GISTdata_inference/threecam_run1
+Use a NEW output directory for every request. The wrapper sets inference mode,
+uses the matched local DCP/config, seed 42, guidance 3 and 35 denoising steps.
+Inference stores/computes network weights in BF16 on the GPU. The trained Edge
+generation-specific K norms are preserved. Native component CPU offload rejects
+this architecture, so it is not enabled. The headcam checkpoint was tested on
+the actual RTX 5070 Ti: 32x18 actions and future video. Local first-call measurements with 35 steps:
+  headcam + future video: 15.95 s, peak PyTorch allocation 8.36 GiB
+  threecam + future video: 14.75 s, peak PyTorch allocation 8.17 GiB
+  headcam actions only: 7.67 s, peak PyTorch allocation 7.74 GiB
+These exclude model construction/loading and include the first lazy vision
+tower load, rather than measuring warmed-up steady-state requests. Desktop and
+driver GPU memory is additional. See outputs/GISTdata_action/local_inference_verification.json.
+
+Output files:
+  predicted_actions.npz: action [32,18], timestamp [32], relative seconds
+  predicted_actions.json: the same absolute target positions as a JSON array
+  predicted_future.mp4: predicted head view or threecam composite
+  request.json: inputs, checkpoint, conditioning rows, model-load/generation timing and peak VRAM
+
+For actions without decoding/saving RGB, add --actions-only:
+  bash examples/infer_GISTdata_edge.sh threecam inputs/GISTdata/example_current outputs/GISTdata_inference/threecam_actions_run1 --actions-only
+This still computes the joint vision/action generation; it only skips VAE
+video decoding and video output. --dry-run checks inputs without model weights.
+The wrapper forwards extra options, e.g. --num-steps 20, but 35 is the default.
+
+The underlying Python entry point, e.g. threecam:
+  COSMOS_INTERNAL=0 COSMOS_TRAINING=0 python -m cosmos_framework.scripts.infer_GISTdata_actions --image /path/to/current/head.png --left-wrist-image /path/to/current/left_wrist.png --right-wrist-image /path/to/current/right_wrist.png --proprioception /path/to/current/proprioception.json --instruction "Using your right arm and right hand, pick up the red bowl and place it at the designated drop-off position on the table." --checkpoint-path outputs/checkpoints/GISTdata/threecam_edge_600/checkpoints/iter_000000600 --config-file outputs/checkpoints/GISTdata/threecam_edge_600/config.local.yaml --output /path/to/new_output --seed 42 --num-steps 35 --guidance 3
+Omit both wrist flags and use headcam_edge_600 for the head-only model.
+
+This CLI predicts one offline chunk and exits; it sends no commands to a robot.
+For a robot control loop, keep OmniInference/model resident, build each new
+current-state batch with build_GISTdata_action_batch, execute the chosen prefix
+of predicted commands, obtain fresh synchronized images/state, and replan.
+Actual robot communication, joint-limit checks and feedback control are not
+implemented by this offline CLI. Inference latency must be measured before
+choosing a replanning rate; 20-Hz action timestamps do not imply 20-Hz inference.
+
+Initial local path configuration (already prepared on this computer):
+  python -m cosmos_framework.scripts.prepare_GISTdata_local_inference --checkpoint-dir outputs/checkpoints/GISTdata/headcam_edge_600 --assets-dir outputs/checkpoints/GISTdata/assets
+  python -m cosmos_framework.scripts.prepare_GISTdata_local_inference --checkpoint-dir outputs/checkpoints/GISTdata/threecam_edge_600 --assets-dir outputs/checkpoints/GISTdata/assets
+The helper preserves DCP and config.remote.yaml, and refuses to replace a
+modified config.local.yaml; keep/edit that local configuration intentionally
+when relocating a prepared copy.
+
+The pinned environment was installed with uv 0.11.29, Python 3.13 and the locked
+cu128 inference group, independently of the existing CPU validation environment.
+Setup command for a fresh machine with network access:
+  UV_PROJECT_ENVIRONMENT=.venv-cosmos3-infer uv sync --locked --no-default-groups --group cu128 --python 3.13
+
+Download integrity:
+  outputs/checkpoints/GISTdata/{headcam,threecam}_edge_600/download_receipt.json
+Both final iteration-600 checkpoints were copied with all four training state
+components (about 23.17 GiB each) and their original saved training config.
+Every source file size and SHA-256 matches the remote server. Shared Wan VAE
+and SigLIP2 vision weights were also checked against their remote SHA-256.
+No Hugging Face authentication or network access was needed during the local
+GPU verification because the matched assets and processor are bundled locally.

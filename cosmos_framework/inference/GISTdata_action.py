@@ -9,10 +9,21 @@ import torch
 from cosmos_framework.data.generator.action.utils.action_processing import make_batched_action_processing_fields
 from cosmos_framework.data.generator.action.utils.domain_utils import get_domain_id
 from cosmos_framework.data.generator.action.utils.transforms import ActionTransformPipeline
-from cosmos_framework.utils.GISTdata_action_contract import ACTION_DIM, DOMAIN_NAME, FPS
+from cosmos_framework.data.generator.action.utils.viewpoint_utils import compose_multiview
+from cosmos_framework.utils.GISTdata_action_contract import ACTION_DIM, DOMAIN_NAME, FPS, THREECAM_DESCRIPTION
 
 
-def build_GISTdata_action_batch(head_rgb, proprioception, instruction, horizon=32, resolution="256", device="cuda"):
+def build_GISTdata_action_batch(
+    head_rgb,
+    proprioception,
+    instruction,
+    horizon=32,
+    resolution="256",
+    device="cuda",
+    *,
+    left_wrist_rgb=None,
+    right_wrist_rgb=None,
+):
     head_rgb = torch.as_tensor(head_rgb)
     q = torch.as_tensor(proprioception, dtype=torch.float32)
     if head_rgb.ndim != 3 or head_rgb.shape[0] != 3 or head_rgb.dtype != torch.uint8:
@@ -21,15 +32,30 @@ def build_GISTdata_action_batch(head_rgb, proprioception, instruction, horizon=3
         raise ValueError("proprioception must contain 18 finite absolute joint angles in canonical order")
     if not instruction.strip() or horizon < 4 or horizon % 4:
         raise ValueError("A nonempty instruction and a positive horizon divisible by four are required")
+    threecam = left_wrist_rgb is not None or right_wrist_rgb is not None
+    if threecam:
+        if left_wrist_rgb is None or right_wrist_rgb is None:
+            raise ValueError("Three-camera inference requires both wrist images")
+        views = [head_rgb, torch.as_tensor(left_wrist_rgb), torch.as_tensor(right_wrist_rgb)]
+        if any(v.shape != head_rgb.shape or v.dtype != torch.uint8 for v in views):
+            raise ValueError("All three RGB views must be uint8 [3,H,W] with matching native dimensions")
+        head_rgb = compose_multiview(*(v[None].float() for v in views))[0].round().clamp(0, 255).to(torch.uint8)
     action = torch.zeros(horizon + 1, ACTION_DIM)
     action[0] = q
-    sample = ActionTransformPipeline(max_action_dim=64, format_prompt_as_json=True, format_prompt_float_seconds=True)(
+    sample = ActionTransformPipeline(
+        max_action_dim=64,
+        cfg_dropout_rate=0,
+        append_idle_frames=False,
+        format_prompt_as_json=True,
+        format_prompt_float_seconds=True,
+    )(
         {
             "video": head_rgb[:, None].repeat(1, horizon + 1, 1, 1),
             "action": action,
             "ai_caption": instruction,
             "mode": "wam",
-            "viewpoint": "ego_view",
+            "viewpoint": "concat_view" if threecam else "ego_view",
+            **({"additional_view_description": THREECAM_DESCRIPTION} if threecam else {}),
             "domain_id": torch.tensor(get_domain_id(DOMAIN_NAME)),
             "conditioning_fps": torch.tensor(FPS),
         },
