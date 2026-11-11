@@ -1,0 +1,79 @@
+GISTdata Edge held-out validation (opt-in)
+
+Original head/threecam recipes keep their previous behavior. Validation needs
+three pieces: a val-split loader, a real model.validation_step, and the trainer
+switch. OmniMoTModel's default validation_step is a stub; setting only
+run_validation=true on the original recipe does not provide working evaluation.
+
+New experiments:
+  action_policy_GISTdata_edge_eval
+  action_policy_GISTdata_edge_threecam_eval
+New standalone TOMLs (same 600-step schedule as the checked-in original recipes):
+  examples/toml/sft_config/action_policy_GISTdata_edge_eval.toml
+  examples/toml/sft_config/action_policy_GISTdata_edge_threecam_eval.toml
+
+To preserve an edited existing TOML, keep using it and add the experiment and
+trainer overrides to the EXISTING launch command. For example, on the server:
+
+  cd /home/inrol/inrol_ws/src/cosmos-framework
+  source .venv/bin/activate
+  source outputs/GISTdata_action/train_environment_head.sh
+  bash examples/launch_sft_action_policy_GISTdata_edge.sh -- \
+    experiment=action_policy_GISTdata_edge_eval \
+    trainer.run_validation=true trainer.run_validation_on_start=true \
+    trainer.validation_iter=200 job.name=GISTdata_edge_10k_eval
+
+The remote head TOML currently has 10000 steps, scheduler cycle [10000] and
+checkpoint interval 1000; those existing values are retained by this command.
+The example uses a NEW job name and therefore starts a new run from its configured
+initial checkpoint. It does not resume the old 600-step weights automatically.
+Use a healthy, available GPU. No running job is altered by installing these files.
+Do not launch another process on a busy GPU solely because it is in the old env.
+
+For three cameras, source train_environment_threecam.sh, use
+examples/launch_sft_action_policy_GISTdata_edge_threecam.sh and set
+experiment=action_policy_GISTdata_edge_threecam_eval with a new job.name.
+
+Defaults:
+  trainer.run_validation = true
+  trainer.run_validation_on_start = true
+  trainer.validation_iter = 200       # optimizer steps, not microbatches
+  trainer.max_val_iter = None         # full finite val split; omitted in TOML
+  trainer.prefetch_validation = false # restart at the beginning on every pass
+
+Single-GPU full validation consumes all 442 windows from the held-out 17 episodes.
+Window order, full instruction (CFG caption dropout=0), RF noise and timesteps
+are fixed for checkpoint comparison. Validation uses eval/no_grad, no optimizer
+step, and does not increment the model's training sample counters. CPU and current
+GPU RNG states are restored after each model validation step. Model state-dict
+keys stay compatible with the original Edge model. Only the opt-in recipes use
+the validation subclass; its loss is the existing native training objective.
+
+For a QUICK partial check, set trainer.max_val_iter=16. This evaluates the same
+FIRST 16 windows of the validation split at each pass; it is not a full-dataset
+score or an object-balanced random sample. For full validation, omit this override.
+The current recipes support data parallel/FSDP with context parallel degree 1.
+With multiple ranks, DistributedSampler pads at most world_size-1 windows to keep
+collective forward counts equal. Metrics include those duplicates in their mean;
+compare val/num_unique_url_key with val/total_url_key to audit coverage.
+
+W&B metrics (each validation pass, at its optimizer iteration):
+  val/loss          native total objective on held-out data
+  val/action_loss   flow-matching action component on held-out data
+  val/vision_loss   flow-matching visual component on held-out data
+  val/unstable_count
+  val/num_unique_url_key
+  val/total_url_key
+
+These measure denoising/flow-matching errors. They do not measure decoded joint
+MAE, controller stability or simulator grasp success. Inference denoising step
+count (--num-steps 4/8/...) does not set the number of validation forward passes.
+An already-running training process must be relaunched to use the new code/config.
+Existing completed runs have no historical validation curve to recover.
+
+Verification for this workspace:
+  outputs/GISTdata_action/validation_config_data_smoke.json
+  outputs/GISTdata_action/validation_verification.json
+Remote GPU-2 smoke failed at CUDA initialization with uncorrectable ECC before
+model construction. CPU tests and both real-data loaders/configs are checked;
+an end-to-end GPU forward remains unverified. No GPU reset/reboot was performed.

@@ -98,6 +98,31 @@ def test_tail_windows_do_not_invent_commands():
         window_starts(12, 7, 3)
 
 
+def test_validation_loader_is_finite_repeatable_and_excludes_training_episodes(prepared, monkeypatch):
+    from types import SimpleNamespace
+
+    from cosmos_framework.data.generator.action.GISTdata_validation import GISTdataValidationLoader
+    from cosmos_framework.data.generator.augmentors import text_tokenizer
+
+    _, bundle, _ = prepared
+    monkeypatch.setattr(
+        text_tokenizer, "lazy_instantiate", lambda config: SimpleNamespace(tokenize_text=lambda *a, **k: [1, 2, 3])
+    )
+    dataset = get_GISTdata_action_sft_dataset(
+        str(bundle), "val", cfg_dropout_rate=0, horizon=8, tokenizer_config={"fake": True}
+    )
+    loader = GISTdataValidationLoader(dataset)
+    state = torch.random.get_rng_state().clone()
+    first = list(loader)
+    second = list(loader)
+    assert len(first) == len(second) == len(dataset)
+    assert [b["__key__"] for b in first] == [b["__key__"] for b in second]
+    assert torch.equal(state, torch.random.get_rng_state())
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    train_episodes = {e["episode_id"] for e in manifest["episodes"] if e["split"] == "train"}
+    assert not {key.rsplit(":", 1)[0] for b in first for key in b["__key__"]} & train_episodes
+
+
 def test_state_is_measured_before_the_first_command(prepared):
     _, bundle, _ = prepared
     ds = GISTdataActionDataset(str(bundle), "all")
