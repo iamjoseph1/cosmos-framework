@@ -18,6 +18,9 @@ trainer overrides to the EXISTING launch command. For example, on the server:
   cd /home/inrol/inrol_ws/src/cosmos-framework
   source .venv/bin/activate
   source outputs/GISTdata_action/train_environment_head.sh
+  # The environment file selects GPU 1. Override AFTER sourcing; choose an available GPU.
+  export CUDA_VISIBLE_DEVICES=GPU-91e16cd0-f93e-e320-3582-b2480d77f96e
+  export NPROC_PER_NODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
   bash examples/launch_sft_action_policy_GISTdata_edge.sh -- \
     experiment=action_policy_GISTdata_edge_eval \
     trainer.run_validation=true trainer.run_validation_on_start=true \
@@ -75,5 +78,15 @@ Verification for this workspace:
   outputs/GISTdata_action/validation_config_data_smoke.json
   outputs/GISTdata_action/validation_verification.json
 Remote GPU-2 smoke failed at CUDA initialization with uncorrectable ECC before
-model construction. CPU tests and both real-data loaders/configs are checked;
-an end-to-end GPU forward remains unverified. No GPU reset/reboot was performed.
+model construction. GPU 3 (L40S) subsequently became available and a native
+head-camera validation forward computed finite total/action/vision losses.
+See outputs/GISTdata_action/validation_smoke_head_gpu3_20261111.log and the GPU
+selection snapshot outputs/GISTdata_action/gpu_selection_eval_head.json.
+GPU numbers outside the process are physical indices; selecting the UUID above
+makes physical GPU 3 appear as cuda:0 inside a one-process torchrun job.
+Historical head training reserved 32.5..33.6 GiB at peak; aim for about 40 GiB
+free before starting, with additional headroom if other users share the device.
+Recheck nvidia-smi immediately before launch; GPU occupancy changes over time.
+The CUDA initialization probe and validation forward do not benchmark sustained
+training throughput or guarantee the memory usage of a longer training run.
+No GPU reset/reboot was performed.
