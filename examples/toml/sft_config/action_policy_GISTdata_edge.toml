@@ -4,7 +4,7 @@
 # Full 28-layer generation pathway, including k_norm_und_for_gen; understanding and VAE frozen.
 [job]
 task = "vfm"
-experiment = "action_policy_GISTdata_edge"
+experiment = "action_policy_GISTdata_edge_eval"
 project = "rb_xhand_dish_pnp"
 group = "GISTdata_head_joint18"
 name = "action_policy_GISTdata_edge"
@@ -39,6 +39,9 @@ f_min = [0.0]
 f_start = [0.0]
 
 [trainer]
+run_validation = true
+run_validation_on_start = true
+validation_iter = 200
 max_iter = 600
 grad_accum_iter = 8
 logging_iter = 1

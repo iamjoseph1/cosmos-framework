@@ -42,3 +42,34 @@ def test_opt_in_validation_keeps_original_training_recipe(config, mode):
     assert recipe["job"]["experiment"] == stem
     assert recipe["trainer"]["run_validation"]
     assert recipe["trainer"]["validation_iter"] == 200
+
+
+def test_head_toml_enables_validation_without_an_experiment_override(monkeypatch, tmp_path):
+    from cosmos_framework.configs.toml_config.sft_config import load_experiment_from_toml
+
+    for name in ("GISTDATA_ACTION_BUNDLE", "BASE_CHECKPOINT_PATH", "WAN_VAE_PATH"):
+        monkeypatch.setenv(name, str(tmp_path))
+    config = load_experiment_from_toml(
+        "examples/toml/sft_config/action_policy_GISTdata_edge.toml",
+        extra_overrides=[
+            "trainer.run_validation=true",
+            "trainer.run_validation_on_start=true",
+            "trainer.validation_iter=100",
+        ],
+    )
+    assert config.trainer.run_validation and config.trainer.validation_iter == 100
+    assert "GISTdataValidationModel" in str(config.model._target_)
+    assert config.dataloader_val.dataset.split == "val"
+    assert config.dataloader_train.dataloader.datasets.GISTdata.dataset.split == "train"
+
+
+def test_missing_validation_loader_is_rejected_during_config_loading(monkeypatch, tmp_path):
+    from cosmos_framework.configs.toml_config.sft_config import load_experiment_from_toml
+
+    for name in ("GISTDATA_ACTION_BUNDLE", "BASE_CHECKPOINT_PATH", "WAN_VAE_PATH"):
+        monkeypatch.setenv(name, str(tmp_path))
+    with pytest.raises(ValueError, match="requires a configured dataloader_val"):
+        load_experiment_from_toml(
+            "examples/toml/sft_config/action_policy_GISTdata_edge.toml",
+            extra_overrides=["experiment=action_policy_GISTdata_edge", "trainer.run_validation=true"],
+        )

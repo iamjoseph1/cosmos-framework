@@ -48,10 +48,15 @@ def test_wandb_defaults_are_opt_in() -> None:
 @pytest.mark.parametrize(
     "recipe", sorted((_REPO_ROOT / "examples/toml/sft_config").glob("*.toml")), ids=lambda p: p.name
 )
-def test_shipped_sft_recipes_disable_wandb(recipe: Path) -> None:
+def test_recipe_logging_preserves_public_defaults_and_GISTdata_project_choice(recipe: Path) -> None:
     with recipe.open("rb") as stream:
         job = JobConfig.model_validate(tomllib.load(stream)["job"])
-    assert job.wandb_mode == "disabled"
+    if recipe.name.startswith("action_policy_GISTdata_"):
+        # These project recipes explicitly opt in to the user's training dashboard.
+        assert job.project == "rb_xhand_dish_pnp"
+        assert job.wandb_mode == "online"
+    else:
+        assert job.wandb_mode == "disabled"
 
 
 @pytest.mark.level(0)

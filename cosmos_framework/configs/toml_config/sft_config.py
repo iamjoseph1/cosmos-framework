@@ -911,6 +911,11 @@ def load_experiment_from_toml(
     from cosmos_framework.utils.functional.lr_scheduler import validate_lr_schedule_horizon
 
     trainer = getattr(config, "trainer", None)
+    if getattr(trainer, "run_validation", False) and getattr(config, "dataloader_val", None) is None:
+        raise ValueError(
+            "trainer.run_validation=true requires a configured dataloader_val. "
+            "Select a validation-enabled experiment or configure a validation loader before enabling validation."
+        )
     max_iter = getattr(trainer, "max_iter", None)
     if max_iter is not None:
         epochs = getattr(trainer, "num_epochs", None)

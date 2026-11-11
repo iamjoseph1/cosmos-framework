@@ -1,9 +1,12 @@
 GISTdata Edge held-out validation (opt-in)
 
-Original head/threecam recipes keep their previous behavior. Validation needs
-three pieces: a val-split loader, a real model.validation_step, and the trainer
-switch. OmniMoTModel's default validation_step is a stub; setting only
-run_validation=true on the original recipe does not provide working evaluation.
+The head-camera TOML now selects action_policy_GISTdata_edge_eval and enables
+validation directly. Existing commands that enable validation flags therefore
+also get the required loader and model implementation. The underlying original
+Python experiment remains training-only, as does the original threecam TOML.
+Validation needs three pieces: a val-split loader, a real model.validation_step,
+and the trainer switch. run_validation=true with a missing loader is rejected
+during TOML loading, before distributed/CUDA setup or model allocation.
 
 New experiments:
   action_policy_GISTdata_edge_eval
@@ -22,7 +25,6 @@ trainer overrides to the EXISTING launch command. For example, on the server:
   export CUDA_VISIBLE_DEVICES=GPU-91e16cd0-f93e-e320-3582-b2480d77f96e
   export NPROC_PER_NODE=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
   bash examples/launch_sft_action_policy_GISTdata_edge.sh -- \
-    experiment=action_policy_GISTdata_edge_eval \
     trainer.run_validation=true trainer.run_validation_on_start=true \
     trainer.validation_iter=200 job.name=GISTdata_edge_10k_eval
 
@@ -90,3 +92,12 @@ Recheck nvidia-smi immediately before launch; GPU occupancy changes over time.
 The CUDA initialization probe and validation forward do not benchmark sustained
 training throughput or guarantee the memory usage of a longer training run.
 No GPU reset/reboot was performed.
+
+2026-11-11 failed GISTdata_edge_v2 run:
+The launch used the training-only experiment with run_validation=true. Its saved
+config had dataloader_val=null and OmniMoTModel, causing iter(None) at startup
+validation before optimizer step 1. The head TOML experiment/flags are corrected;
+remote 10000-step schedule, effective batch 8, LR and checkpoint interval are kept.
+Failed-run configs/logs are preserved under
+outputs/GISTdata_action/failure_head_v2_20261111. No training was launched as part
+of this repair; CPU config/data-loading and regression tests are used instead.
