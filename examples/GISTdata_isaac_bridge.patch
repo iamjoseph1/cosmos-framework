@@ -1,0 +1,384 @@
+--- a/isaac_env/scripts/run/policy/rb_xhand.py
++++ b/isaac_env/scripts/run/policy/rb_xhand.py
+@@ -248,6 +248,10 @@
+         help="dish_pnp: replay-data single object; dishes_pnp: original four-object scene",
+     )
+     parser.add_argument("--dish", choices=["bowl", "mug"], default="bowl")
++    parser.add_argument(
++        "--num-cameras", type=int, choices=[1, 3], default=None,
++        help="dish_pnp: send head only (1, default) or head + both wrists (3) to the policy server",
++    )
+     parser.add_argument("--host", default="127.0.0.1")
+     parser.add_argument("--port", type=int, default=5555)
+     parser.add_argument(
+@@ -263,6 +267,7 @@
+     )
+     parser.add_argument("--no-interactive", action="store_true")
+     parser.add_argument("--trace-policy", action="store_true", help="Print commanded EEF poses.")
++    parser.add_argument("--video-dir", type=Path, default=VIDEO_OUTPUT_DIR, help="Head-camera recording directory")
+     parser.add_argument(
+         "--photorealistic",
+         action="store_true",
+@@ -281,12 +286,16 @@
+         default=DEFAULT_REPLAY_ROOT,
+         help="dish_pnp: replay_data directory containing config.yaml, episodes and assets",
+     )
+-    parser.add_argument("--task", default=None, help="Override the task text to match the training dataset")
++    parser.add_argument("--task", default=None, help="Override task text for other policy servers; Cosmos selects the instruction from --dish")
+     return parser
+
+
+-def policy_schema(scenario):
++def policy_schema(scenario, *, num_cameras=None, dish=None):
+     if scenario == "dish_pnp":
++        if num_cameras is not None or dish is not None:
++            from robot_interface.schema.GISTdata.schema import GISTdataSchema
++
++            return GISTdataSchema(num_cameras or 1, dish or "bowl")
+         from robot_interface.schema.rb_xhand_replay import schema as replay_schema
+
+         return replay_schema
+@@ -324,7 +333,9 @@
+     ):
+         parser.error("Steps/episodes must be positive; settle-steps and seed must be nonnegative")
+     args.seed = resolve_seed(args.seed)
+-    active_schema = policy_schema(args.scenario)
++    if args.scenario != "dish_pnp" and args.num_cameras is not None:
++        parser.error("--num-cameras configures the dish_pnp joint18 scene only")
++    active_schema = policy_schema(args.scenario, num_cameras=args.num_cameras, dish=args.dish)
+     print(f"[scenario] {args.scenario}; dish={args.dish}; seed={args.seed}", flush=True)
+     configure_source_demo_launcher(args)
+     if not getattr(args, "visualizer_explicit", False):
+@@ -332,7 +343,7 @@
+     app = AppLauncher(args).app
+     env = commander = None
+     exit_code = 0
+-    video = HeadCameraVideo(VIDEO_OUTPUT_DIR / args.scenario, args.dish, fps=active_schema.FPS)
++    video = HeadCameraVideo(args.video_dir / args.scenario, args.dish, fps=active_schema.FPS)
+     try:
+         import torch
+         from isaac_env.bridge import Commander, Runner
+@@ -349,11 +360,13 @@
+                 fixed=args.fixed_objects,
+                 photorealistic=args.photorealistic,
+                 video=video,
++                num_cameras=active_schema.num_cameras,
++                policy_schema=active_schema,
+             )
+             pack_observation = lambda obs: obs
+             idle = rollout.idle
+             contract = (
+-                "head 320x240 + state18 -> absolute joint action18; 20 Hz; server schema rb_xhand_replay"
++                f"{active_schema.num_cameras} RGB camera(s) 320x240 + state18 -> absolute joint action18; 20 Hz; GISTdata"
+             )
+         else:
+             import gymnasium as gym
+@@ -394,7 +407,7 @@
+                 print(f"[policy] step={rollout.steps + 1} {args.scenario} target={action}", flush=True)
+             return rollout.action_to_env(action)
+
+-        commander = Commander(active_schema, host=args.host, port=args.port, rcv_timeout_ms=120000)
++        commander = Commander(active_schema, host=args.host, port=args.port, rcv_timeout_ms=120000, while_waiting=idle)
+         runner = Runner(
+             env=rollout,
+             commander=commander,
+--- a/isaac_env/src/isaac_env/bridge/rb_xhand_replay.py
++++ b/isaac_env/src/isaac_env/bridge/rb_xhand_replay.py
+@@ -61,19 +61,28 @@
+ class ReplayPolicyRollout:
+     """Direct absolute joint control; left robot holds replay_data's home pose."""
+
+-    def __init__(self, root, dish, seed, max_steps, *, fixed=False, photorealistic=False, video=None):
++    def __init__(self, root, dish, seed, max_steps, *, fixed=False, photorealistic=False, video=None,
++                 num_cameras=1, policy_schema=None):
+         self.sampler = ReplayEpisodeSampler(root, dish, seed, fixed=fixed)
+         settings = self.sampler.settings
+-        # Policy observations contain only head RGB and right joint positions.
+-        head = dict(settings["replay"]["cameras"]["head"], rgb=True, depth=False)
+-        settings["replay"]["cameras"] = {"head": head}
++        if policy_schema is None and num_cameras != 1:
++            from robot_interface.schema.GISTdata.schema import GISTdataSchema
++
++            policy_schema = GISTdataSchema(num_cameras, dish)
++        self.schema = policy_schema or schema
++        self.camera_names = getattr(self.schema, "CAMERA_NAMES", ("head",))
++        settings["replay"]["cameras"] = {
++            name: dict(settings["replay"]["cameras"][name], rgb=True, depth=False)
++            for name in self.camera_names
++        }
++        head = settings["replay"]["cameras"]["head"]
+         settings["replay"]["observations"] = ["state", "object_pose"]
+         settings["sensors"]["tactile"]["enable"] = False
+         settings["sensors"]["fingertip_contact_forces"] = False
+         self.sampler.config_module.check_config(settings)
+         self.sampler.config_module.validate_assets(settings, self.sampler.episodes)
+         hz = 1 / settings["simulation"]["control_dt_s"]
+-        if not np.isclose(hz, schema.FPS) or head["resolution"] != [320, 240]:
++        if not np.isclose(hz, self.schema.FPS) or head["resolution"] != [320, 240]:
+             raise ValueError("Replay policy expects 20 Hz and a 320x240 head camera")
+         runtime = importlib.import_module(f"{replay_package(root)}.replay_env")
+         self.env = runtime.ReplayEnv(settings)
+@@ -86,7 +95,10 @@
+
+     def observe(self):
+         state = self.env.get_state()
+-        return schema.pack_observation(state["state"], self.env.get_rgb("head").copy())
++        images = {name: self.env.get_rgb(name).copy() for name in self.camera_names}
++        if self.schema is schema:
++            return schema.pack_observation(state["state"], images["head"])
++        return self.schema.pack_observation(state["state"], images)
+
+     def reset(self):
+         self.demo_id, self.episode = self.sampler.sample()
+@@ -107,7 +119,8 @@
+
+     def action_to_env(self, action):
+         action = np.asarray(action, dtype=np.float32)
+-        schema.validate_array(schema.ACTION_SPEC, action)
++        if action.shape != (18,) or not np.isfinite(action).all():
++            raise ValueError("Expected 18 finite absolute joint targets")
+         return action
+
+     def step(self, action):
+--- a/isaac_env/src/isaac_env/bridge/commander.py
++++ b/isaac_env/src/isaac_env/bridge/commander.py
+@@ -9,7 +9,7 @@
+ implementation detail, hence the role-based name ``Commander`` rather than ``...Client``.)
+
+ One non-obvious feature: a *pumped* wait. Instead of blocking on ``recv()`` (which would
+-freeze the sim's GUI while a server is absent or slow), ``reset`` can poll for the reply
++freeze the sim's GUI while a server is absent or slow), reset and action requests can poll for replies
+ while calling a ``while_waiting`` callback every iteration (e.g. render the sim) and abort
+ when ``should_cancel`` says so. That is what lets the simulator boot and stay responsive —
+ move objects, edit properties — before any server is contacted, and stay cancelable while
+@@ -20,6 +20,7 @@
+
+ from collections.abc import Callable
+ from types import ModuleType
++import time
+
+ import numpy as np
+ import zmq
+@@ -31,9 +32,11 @@
+     """ZMQ REQ handle to a command server speaking the ``robot_interface`` protocol."""
+
+     def __init__(
+-        self, schema: ModuleType, host: str = "127.0.0.1", port: int = 5555, rcv_timeout_ms: int = 30000
++        self, schema: ModuleType, host: str = "127.0.0.1", port: int = 5555, rcv_timeout_ms: int = 30000,
++        *, while_waiting: Callable[[], None] | None = None
+     ):
+         self.schema = schema
++        self._while_waiting = while_waiting
+         self._host = host
+         self._port = port
+         self._rcv_timeout_ms = rcv_timeout_ms  # blocking-recv cap (first inference can be slow)
+@@ -57,13 +60,14 @@
+         self._open_socket()
+
+     def _await_reply(
+-        self, while_waiting: Callable[[], None] | None, should_cancel: Callable[[], bool] | None
++        self, while_waiting: Callable[[], None] | None, should_cancel: Callable[[], bool] | None,
++        *, timeout_ms: int | None = None,
+     ) -> bytes | None:
+         """Return the reply bytes, or None if canceled.
+
+         With ``while_waiting`` given, poll for the reply and call it every iteration (keeps
+-        a GUI live) so ``should_cancel`` can abort — no fixed timeout, the callback paces the
+-        loop. Without it, block up to ``rcv_timeout_ms``.
++        a GUI live). Pumped reset waits stay cancelable without a fixed timeout; action
++        waits pass ``timeout_ms``. Without a callback, block up to ``rcv_timeout_ms``.
+         """
+         if while_waiting is None:
+             try:
+@@ -73,7 +77,11 @@
+                     f"commander at {self.addr} did not respond within "
+                     f"{self._rcv_timeout_ms / 1000:.0f}s — is the server running?"
+                 )
++        deadline = None if timeout_ms is None else time.monotonic() + timeout_ms / 1000
+         while True:
++            if deadline is not None and time.monotonic() >= deadline:
++                self._reopen_socket()
++                raise RuntimeError(f"commander at {self.addr} did not respond within {timeout_ms / 1000:.0f}s")
+             if dict(self._poller.poll(timeout=0)).get(self._sock) == zmq.POLLIN:
+                 return self._sock.recv()
+             if should_cancel is not None and should_cancel():
+@@ -97,19 +105,22 @@
+         buf = self._await_reply(while_waiting, should_cancel)
+         if buf is None:
+             return False
+-        msg_type, _, _ = wire.decode(buf)
++        msg_type, _, meta = wire.decode(buf)
++        if meta.get("error"):
++            raise RuntimeError(f"server error: {meta['error']}")
++        if meta.get("instruction"):
++            print(f"[commander] instruction={meta['instruction']}; cameras={meta.get('num_cameras')}", flush=True)
+         if msg_type is not wire.MessageType.RESET:
+             raise RuntimeError(f"expected RESET ack, got {msg_type}")
+         return True
+
+     def get_action(self, wire_arrays: dict[str, np.ndarray]) -> np.ndarray:
+-        """Send one observation, return the commanded action array (blocking).
++        """Return one commanded action, pumping rendering when a callback was configured.
+
+-        Blocking is fine here: a rollout only reaches this point after a successful reset
+-        handshake, so the server is known to be up.
++        The caller does not advance physics while waiting for a fresh action chunk.
+         """
+         self._sock.send(self.schema.encode_obs(wire_arrays))
+-        buf = self._await_reply(None, None)
++        buf = self._await_reply(self._while_waiting, None, timeout_ms=self._rcv_timeout_ms)
+         msg_type, arrays, meta = wire.decode(buf)
+         if meta.get("error"):
+             raise RuntimeError(f"server error: {meta['error']}")
+--- /dev/null
++++ b/robot_interface/src/robot_interface/schema/GISTdata/__init__.py
+@@ -0,0 +1 @@
++"""GISTdata joint-policy protocol with one or three RGB cameras."""
+--- /dev/null
++++ b/robot_interface/src/robot_interface/schema/GISTdata/schema.py
+@@ -0,0 +1,61 @@
++"""GISTdata: synchronized RGB, measured state18, absolute joint action18 at 20 Hz."""
++
++import numpy as np
++
++from robot_interface import wire
++from robot_interface.schema.rb_xhand_multitask.schema import FeatureSpec, validate_array
++
++
++class GISTdataSchema:
++    FPS = 20
++    STATE_DIM = ACTION_DIM = ENV_ACTION_DIM = 18
++    OBS_STATE_SPEC = FeatureSpec("observation.state", (18,), "float32")
++    ACTION_SPEC = FeatureSpec("action", (18,), "float32")
++    TASKS = {dish: f"Pick up the red {dish} and place it at the target position." for dish in ("bowl", "mug")}
++    DEFAULT_TASK = TASKS["bowl"]
++
++    def __init__(self, num_cameras=1, dish="bowl"):
++        if num_cameras not in (1, 3):
++            raise ValueError("num_cameras must be 1 or 3")
++        if dish not in self.TASKS:
++            raise ValueError("dish must be bowl or mug")
++        self.num_cameras, self.dish = num_cameras, dish
++        self.CAMERA_NAMES = ("head",) if num_cameras == 1 else ("head", "left_wrist", "right_wrist")
++        self.OBS_IMAGE_SPECS = tuple(
++            FeatureSpec(f"observation.images.{name}", (240, 320, 3), "uint8") for name in self.CAMERA_NAMES
++        )
++        self.OBS_SPECS = (*self.OBS_IMAGE_SPECS, self.OBS_STATE_SPEC)
++
++    def validate_obs(self, arrays):
++        expected = {spec.key for spec in self.OBS_SPECS}
++        if set(arrays) != expected:
++            raise ValueError(f"Expected exactly {sorted(expected)}, got {sorted(arrays)}")
++        for spec in self.OBS_SPECS:
++            validate_array(spec, arrays[spec.key])
++
++    def pack_observation(self, state, images):
++        arrays = {f"observation.images.{name}": np.asarray(images[name]) for name in self.CAMERA_NAMES}
++        arrays[self.OBS_STATE_SPEC.key] = np.asarray(state, dtype=np.float32)
++        self.validate_obs(arrays)
++        return arrays
++
++    def encode_obs(self, arrays):
++        self.validate_obs(arrays)
++        return wire.encode(wire.MessageType.OBS, arrays)
++
++    def encode_reset(self, task=DEFAULT_TASK):
++        return wire.encode(
++            wire.MessageType.RESET,
++            meta={
++                "task": task,
++                "dish": self.dish,
++                "num_cameras": str(self.num_cameras),
++                "schema": "GISTdata_joint18",
++                "fps": str(self.FPS),
++            },
++        )
++
++    def encode_action(self, action):
++        action = np.asarray(action, dtype=np.float32)
++        validate_array(self.ACTION_SPEC, action)
++        return wire.encode(wire.MessageType.ACTION, {self.ACTION_SPEC.key: action})
+--- /dev/null
++++ b/isaac_env/tests/test_GISTdata_policy_bridge.py
+@@ -0,0 +1,81 @@
++"""GISTdata camera/dish negotiation and responsive policy wait, without Kit."""
++
++import importlib.util
++from pathlib import Path
++import threading
++import time
++from types import SimpleNamespace
++
++import numpy as np
++import pytest
++import zmq
++
++from isaac_env.bridge.commander import Commander
++from isaac_env.bridge.rb_xhand_replay import ReplayPolicyRollout
++from robot_interface import wire
++from robot_interface.schema.GISTdata.schema import GISTdataSchema
++
++
++@pytest.mark.parametrize("count", [1, 3])
++@pytest.mark.parametrize("dish", ["bowl", "mug"])
++def test_cli_negotiates_actual_cameras_and_dish(count, dish):
++    path = Path(__file__).resolve().parents[1] / "scripts/run/policy/rb_xhand.py"
++    spec = importlib.util.spec_from_file_location("GISTdata_client", path)
++    client = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(client)
++    args = client.build_parser().parse_args(["--dish", dish, "--num-cameras", str(count)])
++    schema = client.policy_schema(args.scenario, num_cameras=args.num_cameras, dish=args.dish)
++    _, _, meta = wire.decode(schema.encode_reset("custom text"))
++    assert meta["dish"] == dish and int(meta["num_cameras"]) == count
++    captures = []
++
++    def camera(name):
++        captures.append(name)
++        return np.full((240, 320, 3), len(captures), dtype=np.uint8)
++
++    rollout = object.__new__(ReplayPolicyRollout)
++    rollout.schema, rollout.camera_names = schema, schema.CAMERA_NAMES
++    rollout.env = SimpleNamespace(
++        get_state=lambda: {"state": np.arange(18, dtype=np.float32)}, get_rgb=camera
++    )
++    obs = rollout.observe()
++    assert tuple(captures) == schema.CAMERA_NAMES
++    _, decoded, _ = wire.decode(schema.encode_obs(obs))
++    assert len(decoded) == count + 1
++    for i, name in enumerate(schema.CAMERA_NAMES):
++        assert np.all(decoded[f"observation.images.{name}"] == i + 1)
++
++
++def test_observation_wait_renders_while_real_zmq_reply_is_pending():
++    context = zmq.Context()
++    sock = context.socket(zmq.REP)
++    sock.setsockopt(zmq.RCVTIMEO, 2000)
++    port = sock.bind_to_random_port("tcp://127.0.0.1")
++    schema = GISTdataSchema(1, "bowl")
++    rendered = []
++
++    def respond():
++        sock.recv()
++        time.sleep(0.05)
++        sock.send(schema.encode_action(np.arange(18, dtype=np.float32)))
++
++    worker = threading.Thread(target=respond)
++    worker.start()
++    client = Commander(
++        schema,
++        port=port,
++        rcv_timeout_ms=1000,
++        while_waiting=lambda: (rendered.append(True), time.sleep(0.001)),
++    )
++    try:
++        arrays = schema.pack_observation(
++            np.zeros(18, dtype=np.float32), {"head": np.zeros((240, 320, 3), dtype=np.uint8)}
++        )
++        action = client.get_action(arrays)
++        np.testing.assert_array_equal(action, np.arange(18, dtype=np.float32))
++        assert rendered
++    finally:
++        client.close()
++        worker.join(timeout=2)
++        sock.close(linger=0)
++        context.term()

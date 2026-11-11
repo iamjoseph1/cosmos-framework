@@ -71,6 +71,7 @@ The underlying Python entry point, e.g. threecam:
 Omit both wrist flags and use headcam_edge_600 for the head-only model.
 
 This CLI predicts one offline chunk and exits; it sends no commands to a robot.
+For the connected Isaac Sim controller, see examples/GISTdata_isaac_policy_server.txt.
 For a robot control loop, keep OmniInference/model resident, build each new
 current-state batch with build_GISTdata_action_batch, execute the chosen prefix
 of predicted commands, obtain fresh synchronized images/state, and replan.

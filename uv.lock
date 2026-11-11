@@ -2403,6 +2403,9 @@ reasoner-eval = [
     { name = "seaborn" },
     { name = "toml" },
 ]
+robot-policy = [
+    { name = "pyzmq" },
+]
 serve = [
     { name = "fastapi" },
     { name = "gradio" },
@@ -2781,6 +2784,7 @@ requires-dist = [
     { name = "python-memcached", marker = "extra == 'train'" },
     { name = "pytz", marker = "extra == 'train'" },
     { name = "pyyaml", marker = "extra == 'train'" },
+    { name = "pyzmq", marker = "extra == 'robot-policy'", specifier = "==27.1.0" },
     { name = "qwen-vl-utils" },
     { name = "qwen-vl-utils", marker = "extra == 'reasoner-eval'" },
     { name = "ray", extras = ["serve"], marker = "extra == 'serve'" },
@@ -2818,7 +2822,7 @@ requires-dist = [
     { name = "xatlas", marker = "extra == 'train'" },
     { name = "zarr", marker = "extra == 'train'" },
 ]
-provides-extras = ["automl", "automl-prompts", "quantization", "reasoner-eval", "guardrail", "interactive", "serve", "train"]
+provides-extras = ["robot-policy", "automl", "automl-prompts", "quantization", "reasoner-eval", "guardrail", "interactive", "serve", "train"]
 
 [package.metadata.requires-dev]
 cu128 = [

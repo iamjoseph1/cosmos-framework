@@ -1,0 +1,79 @@
+GISTdata Cosmos policy server + existing Isaac Sim rb_xhand.py client
+
+Terminal 1: Cosmos Framework, Python 3.13 / CUDA 12.8
+  cd /home/dyros/inrol_ws/src/cosmos-framework
+  source .venv-cosmos3-infer/bin/activate
+  CUDA_VISIBLE_DEVICES=0 python -m cosmos_framework.scripts.serve_GISTdata_policy --host 127.0.0.1 --port 5555 --seed 42
+
+Terminal 2: existing Isaac Sim environment, Python 3.12
+  cd /home/dyros/inrol_ws/src/robolearn_playground/isaac_env
+  source .venv/bin/activate
+  python scripts/run/policy/rb_xhand.py --scenario dish_pnp --dish bowl --num-cameras 3 --device cpu --viz kit --host 127.0.0.1 --port 5555 --seed 42 --video-dir result/videos/GISTdata
+
+Change --dish bowl to --dish mug for the mug scene. Select --num-cameras 1
+(head only) or --num-cameras 3 (head + left_wrist + right_wrist). The same server
+supports all four combinations, one simulator session at a time.
+
+The GUI starts and stays interactive before the server is contacted. In the
+Isaac terminal press s/Enter to start, p to pause/resume, r to reset, q to quit.
+In a non-interactive shell add --no-interactive --n-episodes 1 --max-steps N.
+The server can be stopped with Ctrl+C. Close the current client before starting
+a new bowl/mug session. Model switching happens on a new RESET handshake.
+--device cpu selects the simulator-side setting; Cosmos runs on CUDA separately.
+
+Automatic selection:
+  --num-cameras 1 -> outputs/checkpoints/GISTdata/headcam_edge_600
+  --num-cameras 3 -> outputs/checkpoints/GISTdata/threecam_edge_600
+When camera count changes, the server unloads the old policy before loading the
+new one. Only one policy is resident. Changing bowl/mug with the same camera
+count reuses that model and clears its pending action queue.
+
+The client sends explicit dish and camera count on RESET. The server chooses
+the ORIGINAL training instruction from GISTdata_action_contract.INSTRUCTIONS:
+  bowl: Using your right arm and right hand, pick up the red bowl and place it at the designated drop-off position on the table.
+  mug: Using your right arm and right hand, pick up the red mug and place it at the designated drop-off position on the table.
+The simulator's --task override is for other policy servers; this Cosmos server
+always derives the instruction from --dish. The server returns the selected
+instruction in its handshake, and both terminals print it.
+
+Each observation contains only the selected synchronized uint8 RGB images at
+320x240 and 18 measured right-arm/right-hand joint angles. The server uses the
+same head/threecam composition, prompt formatting, domain 33 and raw absolute
+joint contract as training. No original demonstration action is used for control.
+The robot_interface ZMQ/safetensors protocol is shared across the two Python
+versions. Legacy head-only RESET messages without explicit dish still work when
+their task clearly identifies bowl or mug.
+
+The native Cosmos model jointly generates future visual latents and a chunk of
+32 x 18 absolute joint commands. Video decoding is skipped on the server. A queue
+returns one command per existing OBS request; the default is to execute all 32
+commands, then replan from a NEW observation. RESET always clears the queue.
+Use --execute-steps 8 (or any value 1..32) on the server for shorter prefixes.
+Server defaults: --num-steps 35 --guidance 3.0 --execute-steps 32 --seed 42.
+
+This is a synchronous closed-loop SIMULATION controller. During a slow inference
+request, the simulator pumps GUI rendering while leaving physics time paused.
+Actions advance the simulation at its original 20-Hz control rate. Wall-clock
+20-Hz replanning is not implied. Both nodes share the local 16-GB GPU's memory;
+the actual GUI/model combination was exercised on the RTX 5070 Ti.
+
+Server event logs:
+  outputs/GISTdata_policy_server/<timestamp_pid>/events.jsonl
+Events record model changes, selected instruction, generation time, queue length
+and replan step. Camera images are not written by the server. Head-camera videos
+are recorded by rb_xhand.py under the selected --video-dir, with the scenario
+appended. The existing default video path remains unchanged when the flag is omitted.
+
+Dependencies have already been installed in this workspace. For a fresh copy:
+  UV_PROJECT_ENVIRONMENT=.venv-cosmos3-infer uv sync --locked --no-default-groups --group cu128 --extra robot-policy --python 3.13
+  uv pip install --python .venv-cosmos3-infer/bin/python --no-deps -e ../robolearn_playground/robot_interface
+The robot_interface repo must contain schema/GISTdata; the isaac_env launcher,
+ReplayPolicyRollout and Commander must contain this integration's updates.
+The task-start diffs for those sibling repos are bundled in
+examples/GISTdata_isaac_bridge.patch. They preserve pre-existing user edits and
+are also applied to the local sibling repositories already.
+
+Runtime validation evidence is recorded in:
+  outputs/GISTdata_action/isaac_cosmos_bridge_verification.json
+The short live rollouts verify connection/action application/replanning; they
+are not measurements of grasp success rate.
