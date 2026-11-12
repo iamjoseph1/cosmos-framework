@@ -1,0 +1,49 @@
+Three-camera v2 recovery, 2026-11-12
+
+The run failed at optimizer step 3000 while writing a DCP checkpoint.
+W&B's debug-internal.log also records "no space left on device" at
+2026-11-12 07:51:56 UTC. Its output.log traceback was itself truncated
+when the filesystem filled. This was a disk failure, rather than a
+pre-warm or IterableDataset-length warning.
+
+Job path:
+  outputs/train/rb_xhand_dish_pnp/GISTdata_threecam_joint18/GISTdata_edge_threecam_v2
+latest_checkpoint.txt still points to iter_000002000. That checkpoint has
+complete model, optim, scheduler and trainer metadata; CPU validation of
+storage offsets and the trainer iteration is recorded in:
+  outputs/GISTdata_action/threecam_resume_20261112.json
+iter_000003000 contains only a partial model shard without .metadata.
+Do not point latest_checkpoint.txt at it.
+
+Storage cleanup proposal requiring explicit user approval:
+  head v1: iter_000000050 through iter_000000550, every 50 steps (11)
+  threecam v1: iter_000000200 and iter_000000400 (2)
+These 13 intermediate checkpoints use approximately 301 GiB. Preserve
+both v1 iter_000000600 final checkpoints and all v2 checkpoints. The
+intermediate checkpoints have not been archived; deleting them loses
+the ability to restore those particular intermediate training states.
+No cleanup is performed by the resume script.
+
+After storage cleanup, on inrol-workstation2:
+  cd /home/inrol/inrol_ws/src/cosmos-framework
+  bash examples/resume_sft_action_policy_GISTdata_edge_threecam.sh
+
+Optional GPU UUID argument:
+  bash examples/resume_sft_action_policy_GISTdata_edge_threecam.sh <GPU_UUID>
+
+The script checks the existing checkpoint, budgets space for the remaining
+checkpoints of both v2 jobs and checks GPU memory before launching. It uses
+GPU 1 by default, which had about 60 GiB free during inspection; GPU 0 had
+about 38 GiB free while another workload occupied it. Occupancy can change.
+
+Training hyperparameters remain 10000 steps, effective batch 8, LR 2e-5,
+the same scheduler, seed 42, and validation every 100 steps. Checkpoint save
+frequency changes from 1000 to 2000 steps to reduce further disk growth.
+The native same-job DCP loader restores all training state even though
+load_training_state=false is used for the initial base-checkpoint warm start.
+It resumes from step 2000 toward a total of 10000, not 10000 additional steps.
+The streaming input loader does not promise restoration of its exact cursor.
+
+The head v2 process also reported disk-full errors at the same time; its last
+printed step was 4250 and its latest complete checkpoint was step 4000.
+It was not stopped or restarted as part of preparing this recovery.
