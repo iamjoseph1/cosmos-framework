@@ -30,6 +30,8 @@ After storage cleanup, on inrol-workstation2:
 
 Optional GPU UUID argument:
   bash examples/resume_sft_action_policy_GISTdata_edge_threecam.sh <GPU_UUID>
+Check prerequisites without launching training:
+  bash examples/resume_sft_action_policy_GISTdata_edge_threecam.sh --check-only
 
 The script checks the existing checkpoint, budgets space for the remaining
 checkpoints of both v2 jobs and checks GPU memory before launching. It uses

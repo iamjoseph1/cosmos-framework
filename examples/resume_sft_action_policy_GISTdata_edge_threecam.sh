@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Resume the existing 10000-step v2 job after storage has been freed.
 set -euo pipefail
+check_only=false
+if [[ "${1:-}" == "--check-only" ]]; then
+  check_only=true
+  shift
+fi
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 source .venv/bin/activate
 source outputs/GISTdata_action/train_environment_threecam.sh
@@ -48,6 +53,11 @@ memory = subprocess.check_output([
 if int(memory.strip()) < 44 * 1024:
     raise SystemExit('Selected GPU has less than 44 GiB free. Select a GPU with more headroom.')
 PY
+
+if "$check_only"; then
+  echo "Preflight passed; training was not launched."
+  exit 0
+fi
 
 # Same job path lets the native DCP loader restore model, optimizer, scheduler
 # and iteration together. Save every 2000 steps to reduce further disk use.
