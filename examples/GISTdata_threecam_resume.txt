@@ -15,14 +15,17 @@ storage offsets and the trainer iteration is recorded in:
 iter_000003000 contains only a partial model shard without .metadata.
 Do not point latest_checkpoint.txt at it.
 
-Storage cleanup proposal requiring explicit user approval:
+Storage cleanup completed with explicit user approval on 2026-11-12:
   head v1: iter_000000050 through iter_000000550, every 50 steps (11)
   threecam v1: iter_000000200 and iter_000000400 (2)
-These 13 intermediate checkpoints use approximately 301 GiB. Preserve
-both v1 iter_000000600 final checkpoints and all v2 checkpoints. The
-intermediate checkpoints have not been archived; deleting them loses
-the ability to restore those particular intermediate training states.
-No cleanup is performed by the resume script.
+These 13 intermediate checkpoints occupied approximately 301 GiB and were
+deleted. Both v1 iter_000000600 final checkpoints, all v2 checkpoints and
+the Edge base checkpoint were preserved; file sizes, mtimes and metadata
+hashes were checked before and after cleanup. Cleanup receipt:
+  outputs/GISTdata_cleanup_20261112.json
+The GISTdata_action directory contains runtime environment scripts and
+configuration backups, so only test logs and temporary config dumps were
+removed. No cleanup is performed by the resume script.
 
 After storage cleanup, on inrol-workstation2:
   cd /home/inrol/inrol_ws/src/cosmos-framework
