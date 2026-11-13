@@ -62,7 +62,8 @@ class GISTdataPolicyServer:
         self.instruction = INSTRUCTIONS[f"ycb_{dish}"]
         self.generations = self.steps = 0
         self.ready = True
-        self.log("reset", dish=dish, num_cameras=count, instruction=self.instruction)
+        checkpoint = str(getattr(self.policy, "checkpoint", "unknown"))
+        self.log("reset", dish=dish, num_cameras=count, instruction=self.instruction, checkpoint=checkpoint)
         return wire.encode(
             wire.MessageType.RESET,
             meta={
@@ -70,6 +71,7 @@ class GISTdataPolicyServer:
                 "num_cameras": str(count),
                 "instruction": self.instruction,
                 "execute_steps": str(self.execute_steps),
+                "checkpoint": checkpoint,
             },
         )
 

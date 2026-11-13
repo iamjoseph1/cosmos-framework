@@ -1,0 +1,88 @@
+GISTdata Edge v2: one policy server entry point for any prepared checkpoint
+
+Local final checkpoints (10000 optimizer steps):
+  outputs/checkpoints/GISTdata/edge_v2/checkpoints/iter_000010000
+  outputs/checkpoints/GISTdata/edge_threecam_v2/checkpoints/iter_000010000
+Each bundle keeps config.remote.yaml, config.local.yaml, data_manifest.remote.json and all four DCP groups
+(model, optim, scheduler, trainer). The existing assets/Cosmos3-Edge processor,
+vision tower and assets/Wan2.2_VAE.pth are shared. download_receipt.json records
+remote/local SHA-256 verification.
+
+Terminal 1, Cosmos environment (head camera):
+  cd /home/dyros/inrol_ws/src/cosmos-framework
+  source .venv-cosmos3-infer/bin/activate
+  CUDA_VISIBLE_DEVICES=0 python -m cosmos_framework.scripts.serve_GISTdata_policy --checkpoint edge_v2 --num-steps 4 --execute-steps 32 --seed 42 --host 127.0.0.1 --port 5555
+
+Terminal 2, Isaac environment:
+  cd /home/dyros/inrol_ws/src/robolearn_playground/isaac_env
+  source .venv/bin/activate
+  python scripts/run/policy/rb_xhand.py --scenario dish_pnp --dish bowl --num-cameras 1 --device cpu --viz kit --host 127.0.0.1 --port 5555 --seed 42 --video-dir result/videos/GISTdata/v2
+
+For three cameras, use the SAME two Python entry points:
+  Cosmos: change only --checkpoint edge_v2 to --checkpoint edge_threecam_v2
+  Isaac: change only --num-cameras 1 to --num-cameras 3
+The three views are head, left_wrist and right_wrist, composed as in training.
+A camera count that does not match the checkpoint is rejected. For the mug
+scene use --dish mug in Isaac; the server selects the training instruction
+automatically from that flag. Press s/Enter to start, p to pause, r to reset,
+and q to quit in the interactive Isaac terminal.
+
+The simulator currently defaults to object spawns outside the dataset XY disk.
+Add --indist to the Isaac command to sample inside the dataset disk. Keep the
+scene seed fixed for checkpoint comparisons.
+
+Model selection without editing source:
+  --checkpoint edge_v2                        final head-camera v2
+  --checkpoint edge_threecam_v2               final three-camera v2
+  --checkpoint headcam_edge_600               original head-camera v1
+  --checkpoint threecam_edge_600              original three-camera v1
+  --checkpoint /ABS/PATH/TO/PREPARED_BUNDLE    another localized checkpoint
+  --checkpoint /ABS/BUNDLE/checkpoints/iter_000004000
+  --checkpoint auto                          v2 selected by Isaac's camera count
+The default is auto. One policy is resident at a time. For another explicit
+checkpoint stop the server with Ctrl+C, then rerun with the new --checkpoint.
+Stop the old Isaac client before starting a new session.
+
+For bundles with several iterations, latest_checkpoint.txt is honored if present;
+otherwise the highest complete iter_* model is selected. An explicit iteration
+path selects that iteration. Camera mode is read from config.local.yaml.
+
+Check paths, camera mode and iteration without loading CUDA or serving:
+  python -m cosmos_framework.scripts.serve_GISTdata_policy --checkpoint edge_v2 --check-only
+  python -m cosmos_framework.scripts.serve_GISTdata_policy --checkpoint edge_threecam_v2 --check-only
+
+Inference controls:
+  --num-steps 4       denoising steps per newly predicted chunk
+  --num-steps 35      original server default
+  --execute-steps 32  execute 32 commands before replanning from a new observation
+  --execute-steps 8   execute a shorter prefix before replanning
+The 10000 training iterations and inference denoising steps are separate settings.
+Actions remain 18 absolute right-arm/right-hand joint targets in radians, at
+20 Hz. Physics pauses during inference in this synchronous simulation client;
+these commands do not enable asynchronous wall-clock 20-Hz replanning.
+
+Offline one-chunk inference uses the same selector:
+  COSMOS_INTERNAL=0 COSMOS_TRAINING=0 python -m cosmos_framework.scripts.infer_GISTdata_actions --checkpoint edge_v2 --image inputs/GISTdata/example_current/head.png --proprioception inputs/GISTdata/example_current/proprioception.json --instruction "Using your right arm and right hand, pick up the red bowl and place it at the designated drop-off position on the table." --output outputs/GISTdata_inference/edge_v2_example --num-steps 4 --seed 42 --actions-only
+For threecam use --checkpoint edge_threecam_v2 and add both wrist images:
+  --left-wrist-image inputs/GISTdata/example_current/left_wrist.png
+  --right-wrist-image inputs/GISTdata/example_current/right_wrist.png
+Use a fresh --output directory each time. Omit --actions-only to decode/save
+the jointly predicted future video along with the action chunk.
+
+Preparing another downloaded bundle:
+  python -m cosmos_framework.scripts.prepare_GISTdata_local_inference --checkpoint-dir /ABS/PATH/TO/BUNDLE --assets-dir outputs/checkpoints/GISTdata/assets
+The bundle needs config.remote.yaml and checkpoints/iter_*/model DCP. If the saved
+camera_mode is null, copy the training dataset's manifest.json into the bundle as
+data_manifest.remote.json; null means training used the manifest's camera mode.
+The helper
+localizes paths and uses the native inference model for validation-enabled
+training configs, preserving the same trained state-dict schema and weights.
+
+Verification on 2026-11-13, RTX 5070 Ti:
+  outputs/GISTdata_v2_setup/download_verified.json
+  outputs/GISTdata_v2_setup/isaac_verification.json
+The live check switched one server from head/bowl to threecam/mug, applied three
+actions in each Isaac scene and generated two chunks per scene from updated
+observations. Four-step chunk times were 5.60/0.77 s (head) and 4.86/0.78 s
+(threecam), excluding model loading and IPC. These short checks are not a grasp
+success-rate evaluation. CPU checkpoint/protocol tests also pass.

@@ -1,5 +1,9 @@
 GISTdata Edge action-policy inference on the local RTX 5070 Ti
 
+For the newer 10000-step v2 checkpoints, unified --checkpoint selection and
+Isaac execution commands, see examples/GISTdata_v2_inference.txt. The examples
+below describe the original v1 600-step checkpoints.
+
 The two downloaded final checkpoints are stored under:
   outputs/checkpoints/GISTdata/headcam_edge_600/
   outputs/checkpoints/GISTdata/threecam_edge_600/

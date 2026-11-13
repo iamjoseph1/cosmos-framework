@@ -1,5 +1,10 @@
 GISTdata Cosmos policy server + existing Isaac Sim rb_xhand.py client
 
+For downloaded 10000-step v2 models and explicit checkpoint switching, see
+examples/GISTdata_v2_inference.txt. Auto selection now uses v2; the historical
+v1 checkpoints remain selectable with --checkpoint headcam_edge_600 or
+--checkpoint threecam_edge_600.
+
 Terminal 1: Cosmos Framework, Python 3.13 / CUDA 12.8
   cd /home/dyros/inrol_ws/src/cosmos-framework
   source .venv-cosmos3-infer/bin/activate
@@ -22,8 +27,8 @@ a new bowl/mug session. Model switching happens on a new RESET handshake.
 --device cpu selects the simulator-side setting; Cosmos runs on CUDA separately.
 
 Automatic selection:
-  --num-cameras 1 -> outputs/checkpoints/GISTdata/headcam_edge_600
-  --num-cameras 3 -> outputs/checkpoints/GISTdata/threecam_edge_600
+  --num-cameras 1 -> outputs/checkpoints/GISTdata/edge_v2
+  --num-cameras 3 -> outputs/checkpoints/GISTdata/edge_threecam_v2
 When camera count changes, the server unloads the old policy before loading the
 new one. Only one policy is resident. Changing bowl/mug with the same camera
 count reuses that model and clears its pending action queue.

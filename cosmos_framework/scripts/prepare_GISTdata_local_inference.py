@@ -16,7 +16,19 @@ def prepare(checkpoint_dir: Path, assets_dir: Path):
     source = checkpoint_dir / "config.remote.yaml"
     original = OmegaConf.to_container(OmegaConf.load(source), resolve=True)
     dataset = original["dataloader_train"]["dataloader"]["datasets"]["GISTdata"]["dataset"]
-    mode = dataset.get("camera_mode", "head")
+    mode = dataset.get("camera_mode")
+    manifest_file = checkpoint_dir / "data_manifest.remote.json"
+    if manifest_file.is_file():
+        # camera_mode=None delegates to the dataset manifest during training.
+        # Inference must use that same manifest, including nullable threecam recipes.
+        manifest_mode = json.loads(manifest_file.read_text()).get("camera_mode", "head")
+        if mode is not None and mode != manifest_mode:
+            raise ValueError("Saved camera mode and training data manifest disagree")
+        mode = manifest_mode
+    elif mode is None:
+        if "camera_mode" in dataset:
+            raise ValueError("camera_mode is unset; copy the training manifest.json as data_manifest.remote.json")
+        mode = "head"  # Original head-only configs predate the camera_mode field.
     if mode not in ("head", "threecam"):
         raise ValueError(f"Unsupported camera mode: {mode}")
     processor = assets_dir / "Cosmos3-Edge"
@@ -25,6 +37,10 @@ def prepare(checkpoint_dir: Path, assets_dir: Path):
         if not path.is_file():
             raise FileNotFoundError(path)
     model = copy.deepcopy(original["model"])
+    # Validation adds no parameters. Inference uses the native model with the
+    # identical state-dict schema, without importing a training-only subclass.
+    if model.get("_target_") == "cosmos_framework.model.generator.GISTdata_validation.GISTdataValidationModel":
+        model["_target_"] = "cosmos_framework.model.generator.omni_mot_model.OmniMoTModel"
     config = model["config"]
     if config["vlm_config"]["model_name"] != "nvidia/Cosmos3-Edge":
         raise ValueError("This local asset bundle is for the two trained GISTdata Edge policies")

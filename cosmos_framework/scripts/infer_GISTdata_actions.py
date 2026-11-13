@@ -33,6 +33,10 @@ def main():
     p.add_argument("--output", type=Path, required=True, help="New output directory")
     p.add_argument("--checkpoint-path", type=Path)
     p.add_argument("--config-file", type=Path, help="Matching saved training config.yaml (or exported config.json)")
+    p.add_argument(
+        "--checkpoint", help="Prepared bundle name/path or iter_* path; resolves config and trained camera mode"
+    )
+    p.add_argument("--checkpoint-root", type=Path, default=Path("outputs/checkpoints/GISTdata"))
     p.add_argument("--horizon", type=int, default=32)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--num-steps", type=int, default=35)
@@ -41,8 +45,17 @@ def main():
     a = p.parse_args()
     if (a.left_wrist_image is None) != (a.right_wrist_image is None):
         p.error("Provide both --left-wrist-image and --right-wrist-image for the three-camera model")
+    if a.checkpoint is not None:
+        if a.checkpoint_path is not None or a.config_file is not None:
+            p.error("Use --checkpoint alone, or the legacy --checkpoint-path/--config-file pair")
+        from cosmos_framework.inference.GISTdata_checkpoint import resolve_GISTdata_checkpoint
+
+        selected = resolve_GISTdata_checkpoint(
+            a.checkpoint, a.checkpoint_root, num_cameras=3 if a.left_wrist_image is not None else 1
+        )
+        a.checkpoint_path, a.config_file = selected.checkpoint, selected.config_file
     if not a.dry_run and (a.checkpoint_path is None or a.config_file is None):
-        p.error("Real inference requires --checkpoint-path and --config-file for the trained robot model")
+        p.error("Real inference requires --checkpoint (or --checkpoint-path and --config-file)")
     if a.num_steps < 1:
         p.error("--num-steps must be positive")
     threecam = a.left_wrist_image is not None
